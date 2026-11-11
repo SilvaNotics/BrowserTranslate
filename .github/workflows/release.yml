@@ -1,0 +1,27 @@
+name: Release extension
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck && npm test
+      - run: npm run zip
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - name: Publish developer-mode package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          cp .output/browser-translate-*-chrome.zip "BrowserTranslate-${RELEASE_TAG}-chrome.zip"
+          gh release create "$RELEASE_TAG" "BrowserTranslate-${RELEASE_TAG}-chrome.zip" --verify-tag --title "译境 ${RELEASE_TAG}" --notes-file CHANGELOG.md

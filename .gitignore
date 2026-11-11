@@ -1,0 +1,12 @@
+node_modules/
+.output/
+.wxt/
+.superpowers/
+.env
+.env.*
+*.pem
+public/ocr/
+public/THIRD_PARTY_NOTICES.txt
+test-results/
+playwright-report/
+artifacts/

@@ -1,0 +1,8 @@
+node_modules/
+.wxt/
+.output/
+artifacts/
+test-results/
+public/ocr/
+public/THIRD_PARTY_NOTICES.txt
+package-lock.json
