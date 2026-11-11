@@ -16,10 +16,10 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { Brand, External, languages, ModelPicker } from '../../src/ui/components';
+import { Brand, External, languages, ModelNameInput, ModelPicker } from '../../src/ui/components';
 import { useSettings } from '../../src/ui/use-settings';
 import { rpc, taskId } from '../../src/core/rpc';
-import type { Provider } from '../../src/core/types';
+import type { ModelCatalog, Provider } from '../../src/core/types';
 import '../../src/ui/style.css';
 function SecretInput({
   label,
@@ -111,14 +111,20 @@ function Options() {
     setError('');
     setNotice('');
     try {
-      const models = await rpc<string[]>({
+      const { models, visionModels } = await rpc<ModelCatalog>({
         type: 'provider:models',
         id: taskId(),
         provider: draft,
       });
-      setDraft({ ...draft, models });
+      setDraft({ ...draft, models, visionModels });
       if (!model) setModel(models[0] ?? '');
-      setNotice('已获取 ' + models.length + ' 个模型；也可手动输入。');
+      setNotice(
+        '已获取 ' +
+          models.length +
+          ' 个模型，其中 ' +
+          visionModels.length +
+          ' 个支持视觉输入；也可手动输入。',
+      );
     } catch (e) {
       setError((e instanceof Error ? e.message : '获取失败') + ' 你仍可以手动输入模型名称。');
     } finally {
@@ -312,18 +318,13 @@ function Options() {
                     {busy === 'models' && <LoaderCircle size={11} className="spin" />}获取模型列表
                   </button>
                 </div>
-                <input
+                <ModelNameInput
                   id="provider-model"
-                  list="provider-models"
+                  label="模型名称"
                   value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  placeholder="选择或手动输入精确模型 ID"
+                  models={draft.models}
+                  onChange={setModel}
                 />
-                <datalist id="provider-models">
-                  {draft.models.map((m) => (
-                    <option key={m} value={m} />
-                  ))}
-                </datalist>
               </div>
               <div className="form-actions">
                 <button
@@ -353,26 +354,21 @@ function Options() {
                 label="默认翻译模型"
                 settings={settings}
                 value={settings.translation}
-                onChange={(ref) => {
-                  if (ref === null || ref.model.trim()) save((s) => ({ ...s, translation: ref }));
-                }}
+                onChange={(ref) => save((s) => ({ ...s, translation: ref }))}
               />
               <ModelPicker
                 label="详细解释模型"
                 settings={settings}
                 value={settings.detail}
                 inherit
-                onChange={(ref) => {
-                  if (ref === null || ref.model.trim()) save((s) => ({ ...s, detail: ref }));
-                }}
+                onChange={(ref) => save((s) => ({ ...s, detail: ref }))}
               />
               <ModelPicker
                 label="截图视觉模型"
+                visionOnly
                 settings={settings}
                 value={settings.vision}
-                onChange={(ref) => {
-                  if (ref === null || ref.model.trim()) save((s) => ({ ...s, vision: ref }));
-                }}
+                onChange={(ref) => save((s) => ({ ...s, vision: ref }))}
               />
             </div>
           )}
@@ -460,7 +456,7 @@ function Options() {
           </div>
           <div className="settings-card">
             <p className="section-description">
-              “详细”仅使用模型解释；点击它旁边的地球图标才会由 Exa
+              首次点击地球图标会启用联网模式并变深色，再次点击地球或点击“详细”，由 Exa
               搜索相关资料，再让模型结合上下文解释并列出出处。
             </p>
             <div className="field">

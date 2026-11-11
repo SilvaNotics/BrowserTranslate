@@ -78,7 +78,17 @@ test.beforeAll(async () => {
       requests.push({ path: req.url ?? '', body });
       res.setHeader('Content-Type', 'application/json');
       if (req.url === '/custom/v1/models') {
-        res.end(JSON.stringify({ data: [{ id: 'fixture-text' }, { id: 'fixture-vision' }] }));
+        res.end(
+          JSON.stringify({
+            data: [
+              { id: 'fixture-text', architecture: { input_modalities: ['text'] } },
+              {
+                id: 'fixture-vision',
+                architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] },
+              },
+            ],
+          }),
+        );
         return;
       }
       if (req.url !== '/custom/v1/chat/completions') {
@@ -133,12 +143,31 @@ test.beforeAll(async () => {
     });
   });
   worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
+  await worker.evaluate(() => {
+    const scope = globalThis as typeof globalThis & { __runtimeErrors: string[] };
+    scope.__runtimeErrors = [];
+    scope.addEventListener('error', (event) => scope.__runtimeErrors.push(event.message));
+    scope.addEventListener('unhandledrejection', (event) =>
+      scope.__runtimeErrors.push(String(event.reason)),
+    );
+  });
   id = worker.url().split('/')[2]!;
 });
 test.afterAll(async () => {
-  await context?.close();
-  await new Promise<void>((resolve) => server?.close(() => resolve()));
-  if (profile) await rm(profile, { recursive: true, force: true });
+  try {
+    if (worker)
+      expect(
+        await worker.evaluate(
+          () => (globalThis as typeof globalThis & { __runtimeErrors: string[] }).__runtimeErrors,
+        ),
+      ).toEqual([]);
+    expect(errors).toEqual([]);
+    expect(warnings).toEqual([]);
+  } finally {
+    await context?.close();
+    await new Promise<void>((resolve) => server?.close(() => resolve()));
+    if (profile) await rm(profile, { recursive: true, force: true });
+  }
 });
 
 test('供应商配置、连接、划词、整页恢复与截图链路', async () => {
@@ -151,10 +180,64 @@ test('供应商配置、连接、划词、整页恢复与截图链路', async ()
   await options.getByLabel('供应商 API Key', { exact: true }).fill('fixture-key');
   await options.getByRole('button', { name: '获取模型列表' }).click();
   await expect(options.getByRole('status')).toContainText('2 个模型');
+  await options.getByLabel('模型名称', { exact: true }).selectOption('fixture-vision');
+  await options.getByLabel('模型名称', { exact: true }).selectOption('fixture-text');
   await options.getByRole('button', { name: '测试连接' }).click();
   await expect(options.getByRole('status')).toContainText('连接成功');
   await options.getByRole('button', { name: '保存供应商' }).click();
   await expect(options.getByText('供应商已保存。', { exact: true })).toBeVisible();
+  const translationModel = options.getByLabel('默认翻译模型名称', { exact: true });
+  await translationModel.selectOption('fixture-vision');
+  await expect
+    .poll(() =>
+      worker.evaluate(
+        async () => (await chrome.storage.local.get('settings')).settings.translation.model,
+      ),
+    )
+    .toBe('fixture-vision');
+  await options.reload();
+  await expect(translationModel).toHaveValue('fixture-vision');
+  await translationModel.selectOption('');
+  const manualModel = options.getByLabel('默认翻译模型名称（手动输入）', { exact: true });
+  await manualModel.fill('fixture-manual');
+  await manualModel.press('Tab');
+  await expect
+    .poll(() =>
+      worker.evaluate(
+        async () => (await chrome.storage.local.get('settings')).settings.translation.model,
+      ),
+    )
+    .toBe('fixture-manual');
+  await options.reload();
+  await expect(manualModel).toHaveValue('fixture-manual');
+  await translationModel.selectOption('fixture-text');
+  await expect
+    .poll(() =>
+      worker.evaluate(
+        async () => (await chrome.storage.local.get('settings')).settings.translation.model,
+      ),
+    )
+    .toBe('fixture-text');
+  await expect(options.getByLabel('截图视觉模型供应商', { exact: true })).toHaveValue('');
+  await options
+    .getByLabel('截图视觉模型供应商', { exact: true })
+    .selectOption({ label: '本地测试服务' });
+  await expect(options.getByLabel('截图视觉模型名称', { exact: true })).toHaveValue('__unselected');
+  expect(
+    await worker.evaluate(async () => (await chrome.storage.local.get('settings')).settings.vision),
+  ).toBeNull();
+  await expect(
+    options.getByLabel('截图视觉模型名称', { exact: true }).locator('option:not([hidden])'),
+  ).toHaveText(['手动输入模型 ID', 'fixture-vision']);
+  await expect(
+    options.getByLabel('默认翻译模型名称', { exact: true }).locator('option:not([hidden])'),
+  ).toHaveText(['手动输入模型 ID', 'fixture-text', 'fixture-vision']);
+  await options.getByLabel('截图视觉模型供应商', { exact: true }).selectOption('');
+  await expect
+    .poll(() =>
+      worker.evaluate(async () => (await chrome.storage.local.get('settings')).settings.vision),
+    )
+    .toBeNull();
   await options.screenshot({ path: 'artifacts/settings.png', fullPage: true });
   const popup = await context.newPage();
   await popup.setViewportSize({ width: 420, height: 720 });
@@ -414,8 +497,7 @@ test('视觉识别仅上传裁剪图片，联网解释引用有效来源，搜�
   await options
     .getByLabel('截图视觉模型供应商', { exact: true })
     .selectOption({ label: '本地测试服务' });
-  await options.getByLabel('截图视觉模型名称', { exact: true }).fill('fixture-vision');
-  await options.getByLabel('截图视觉模型名称', { exact: true }).press('Tab');
+  await options.getByLabel('截图视觉模型名称', { exact: true }).selectOption('fixture-vision');
   await options.getByLabel('截图文字识别', { exact: true }).selectOption('vision');
   await expect
     .poll(() =>
@@ -510,7 +592,24 @@ test('视觉识别仅上传裁剪图片，联网解释引用有效来源，搜�
   await expect(page.locator('.yj-detail-text')).not.toContainText('[1]');
   await expect(page.locator('.yj-source')).toHaveCount(0);
   await page.screenshot({ path: 'artifacts/dictionary-offline.png', fullPage: true });
-  await page.getByRole('button', { name: '联网搜索', exact: true }).click();
+  const webSearch = page.getByRole('button', { name: '联网搜索', exact: true });
+  const beforeArm = requests.length;
+  await expect(webSearch).toHaveAttribute('aria-pressed', 'false');
+  const inactiveBackground = await webSearch.evaluate((el) => getComputedStyle(el).backgroundColor);
+  await webSearch.click();
+  await expect(webSearch).toHaveAttribute('aria-pressed', 'true');
+  expect(await webSearch.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe(
+    inactiveBackground,
+  );
+  expect(requests).toHaveLength(beforeArm);
+  expect(
+    await worker.evaluate(
+      () => (globalThis as typeof globalThis & { __exaCalls: number }).__exaCalls,
+    ),
+  ).toBe(0);
+  await expect(page.getByRole('button', { name: '重试联网查证' })).toHaveCount(0);
+  await page.screenshot({ path: 'artifacts/dictionary-armed.png', fullPage: true });
+  await webSearch.click();
   await expect(page.getByText('已检索相关网络资料 · 请结合来源判断')).toBeVisible();
   await expect(page.locator('a[href="https://example.com/dictionary"]')).toBeVisible();
   await expect(page.locator('.yj-detail-text')).not.toContainText('[99]');
@@ -523,7 +622,7 @@ test('视觉识别仅上传裁剪图片，联网解释引用有效来源，搜�
   await worker.evaluate(() => {
     (globalThis as typeof globalThis & { __exaMode: string }).__exaMode = 'rate-limit';
   });
-  await page.getByRole('button', { name: '联网搜索', exact: true }).click();
+  await page.getByRole('button', { name: '详细', exact: true }).click();
   await expect(page.getByText(/未完成联网查证/)).toBeVisible();
   await expect(page.getByRole('button', { name: '重试联网查证' })).toBeVisible();
   await expect(page.locator('.yj-source')).toHaveCount(0);

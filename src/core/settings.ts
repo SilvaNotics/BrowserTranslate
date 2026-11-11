@@ -43,6 +43,12 @@ export function validateSettings(value: unknown): Settings {
       p.models.some((m) => typeof m !== 'string')
     )
       throw new Error('供应商配置不正确');
+    if (
+      p.visionModels !== undefined &&
+      (!Array.isArray(p.visionModels) ||
+        p.visionModels.some((model) => typeof model !== 'string' || !p.models.includes(model)))
+    )
+      throw new Error('视觉模型能力列表不正确');
     const url = new URL(p.baseUrl);
     if (
       !['http:', 'https:'].includes(url.protocol) ||

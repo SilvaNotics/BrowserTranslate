@@ -71,9 +71,8 @@ export function ResultCard({
       window.removeEventListener('resize', resize);
     };
   }, []);
-  async function explain(useWeb = false) {
+  async function explain(useWeb: boolean) {
     setBusy(true);
-    setOnline(useWeb);
     setDetail(undefined);
     setError('');
     const id = taskId();
@@ -206,7 +205,7 @@ export function ResultCard({
                     <span>{new URL(s.url).hostname} ↗</span>
                   </a>
                 ))}
-                {online && !detail.verified && (
+                {detail.warning && !detail.verified && (
                   <button className="yj-link" onClick={() => void explain(true)}>
                     重试联网查证
                   </button>
@@ -248,17 +247,21 @@ export function ResultCard({
         <button
           className="yj-primary"
           disabled={busy || !original.trim() || result.loading}
-          onClick={() => void explain()}
+          onClick={() => void explain(online)}
         >
           <BookOpen size={14} />
           详细
         </button>
         <button
-          className="yj-secondary"
+          className={online ? 'yj-secondary yj-web active' : 'yj-secondary yj-web'}
           aria-label="联网搜索"
-          title="联网搜索并解释"
+          aria-pressed={online}
+          title={online ? '联网模式已启用，点击搜索并解释' : '启用联网模式'}
           disabled={busy || !original.trim() || result.loading}
-          onClick={() => void explain(true)}
+          onClick={() => {
+            if (online) void explain(true);
+            else setOnline(true);
+          }}
         >
           <Globe2 size={16} />
         </button>

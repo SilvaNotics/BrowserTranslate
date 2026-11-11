@@ -1,7 +1,7 @@
 {
   "name": "browser-translate",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.5",
   "type": "module",
   "scripts": {
     "dev": "wxt",
@@ -23,7 +23,7 @@
     "tesseract.js": "^6.0.0"
   },
   "devDependencies": {
-    "@playwright/test": "^1.56.0",
+    "@playwright/test": "1.65.0",
     "@types/chrome": "^0.0.287",
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",

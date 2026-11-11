@@ -372,3 +372,11 @@ button svg {
     transition: none !important;
   }
 }
+
+.yj-web {
+  color: var(--yj-muted);
+}
+.yj-web.active {
+  background: var(--yj-text);
+  color: var(--yj-bg);
+}

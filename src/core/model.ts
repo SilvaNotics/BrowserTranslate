@@ -1,4 +1,5 @@
-import type { Provider, Segment } from './types';
+import type { ModelCatalog, Provider, Segment } from './types';
+import { modelCatalog } from './model-capabilities';
 export function apiUrl(base: string, path: string) {
   const url = new URL(base);
   if (
@@ -86,14 +87,12 @@ export async function complete(
     throw new Error('模型未返回文字，请检查模型名称和兼容接口。');
   return result.trim();
 }
-export async function listModels(provider: Provider, signal?: AbortSignal): Promise<string[]> {
+export async function listModels(provider: Provider, signal?: AbortSignal): Promise<ModelCatalog> {
   const data = (await request(provider, 'models', undefined, signal)) as {
-    data?: { id?: unknown }[];
+    data?: unknown[];
   };
   if (!Array.isArray(data.data)) throw new Error('无法读取模型列表，请手动输入模型名称。');
-  return [
-    ...new Set(data.data.map((m) => m.id).filter((id): id is string => typeof id === 'string')),
-  ].sort();
+  return modelCatalog(data.data);
 }
 export const translationPrompt = (language: string) =>
   '你是专业翻译。自动识别输入语言，翻译为' +

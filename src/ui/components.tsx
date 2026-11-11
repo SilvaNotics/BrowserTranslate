@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from 'react';
 import { ArrowUpRight, Languages } from 'lucide-react';
 import type { ModelRef, Settings } from '../core/types';
+import { knownVisionModel } from '../core/model-capabilities';
 export const languages = [
   '简体中文',
   '繁體中文',
@@ -62,18 +63,81 @@ export function Toggle({
     </label>
   );
 }
+export function ModelNameInput({
+  id,
+  label,
+  value,
+  models,
+  disabled = false,
+  onChange,
+  onCommit,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  models: string[];
+  disabled?: boolean;
+  onChange: (model: string) => void;
+  onCommit?: (model: string) => void;
+}) {
+  const [manual, setManual] = useState(false);
+  const showManual = manual || (!!value && !models.includes(value)) || !models.length;
+  return (
+    <div className="model-name-input">
+      <select
+        id={id}
+        aria-label={label}
+        value={showManual ? '' : value || '__unselected'}
+        disabled={disabled}
+        onChange={(e) => {
+          const name = e.target.value;
+          setManual(!name);
+          if (name) {
+            onChange(name);
+            onCommit?.(name);
+          }
+        }}
+      >
+        <option value="__unselected" disabled hidden>
+          请选择模型
+        </option>
+        <option value="">手动输入模型 ID</option>
+        {models.map((name) => (
+          <option key={name} value={name}>
+            {name}
+          </option>
+        ))}
+      </select>
+      {showManual && (
+        <input
+          aria-label={label + '（手动输入）'}
+          placeholder="输入精确模型 ID"
+          value={value}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={() => onCommit?.(value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') onCommit?.(value);
+          }}
+        />
+      )}
+    </div>
+  );
+}
 export function ModelPicker({
   label,
   value,
   settings,
   onChange,
   inherit = false,
+  visionOnly = false,
 }: {
   label: string;
   value: ModelRef | null;
   settings: Settings;
   onChange: (ref: ModelRef | null) => void;
   inherit?: boolean;
+  visionOnly?: boolean;
 }) {
   const id = useId();
   const [providerId, setProviderId] = useState(value?.providerId ?? ''),
@@ -83,6 +147,11 @@ export function ModelPicker({
     setModel(value?.model ?? '');
   }, [value?.providerId, value?.model]);
   const provider = settings.providers.find((p) => p.id === providerId);
+  const models = provider
+    ? visionOnly
+      ? (provider.visionModels ?? provider.models.filter(knownVisionModel))
+      : provider.models
+    : [];
   return (
     <div className="model-picker">
       <label htmlFor={id + '-provider'}>{label}</label>
@@ -93,7 +162,7 @@ export function ModelPicker({
           value={provider?.id ?? ''}
           onChange={(e) => {
             const p = settings.providers.find((p) => p.id === e.target.value);
-            const name = p?.models[0] ?? '';
+            const name = visionOnly ? '' : (p?.models[0] ?? '');
             setProviderId(p?.id ?? '');
             setModel(name);
             if (!p) onChange(null);
@@ -107,28 +176,26 @@ export function ModelPicker({
             </option>
           ))}
         </select>
-        <input
-          aria-label={label + '名称'}
-          placeholder="选择或输入模型名称"
+        <ModelNameInput
+          key={provider?.id ?? ''}
+          id={id + '-model'}
+          label={label + '名称'}
           value={model}
+          models={models}
           disabled={!provider}
-          list={id + '-models'}
-          onChange={(e) => setModel(e.target.value)}
-          onBlur={() => {
-            if (provider && model.trim())
-              onChange({ providerId: provider.id, model: model.trim() });
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && provider && model.trim())
-              onChange({ providerId: provider.id, model: model.trim() });
+          onChange={setModel}
+          onCommit={(name) => {
+            if (provider && name.trim()) onChange({ providerId: provider.id, model: name.trim() });
           }}
         />
-        <datalist id={id + '-models'}>
-          {provider?.models.map((m) => (
-            <option key={m} value={m} />
-          ))}
-        </datalist>
       </div>
+      {visionOnly && provider && (
+        <small className="field-hint">
+          {models.length
+            ? '仅显示支持图片输入的模型，请选择用于 OCR 的模型。'
+            : '未识别到视觉模型，请重新获取模型列表，或手动输入已确认支持图片的模型 ID。'}
+        </small>
+      )}
     </div>
   );
 }

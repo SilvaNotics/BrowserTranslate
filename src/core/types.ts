@@ -4,6 +4,11 @@ export interface Provider {
   baseUrl: string;
   apiKey: string;
   models: string[];
+  visionModels?: string[];
+}
+export interface ModelCatalog {
+  models: string[];
+  visionModels: string[];
 }
 export interface ModelRef {
   providerId: string;

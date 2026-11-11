@@ -132,10 +132,6 @@ small {
   background: transparent;
   color: var(--muted);
 }
-.btn.danger {
-  background: #d7444410;
-  color: var(--danger);
-}
 .icon-btn {
   width: 32px;
   height: 32px;
@@ -786,4 +782,10 @@ small {
 .popup .popup-footer {
   padding-top: 10px;
   padding-bottom: 10px;
+}
+
+.model-name-input {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
 }
