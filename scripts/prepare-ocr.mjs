@@ -11,7 +11,11 @@ await cp('node_modules/tesseract.js-core', root + '/core', {
 });
 for (const language of ['eng', 'chi_sim'])
   await copyFile(
-    'node_modules/@tesseract.js-data/' + language + '/4.0.0/' + language + '.traineddata.gz',
+    'node_modules/@tesseract.js-data/' +
+      language +
+      '/4.0.0_best_int/' +
+      language +
+      '.traineddata.gz',
     root + '/lang/' + language + '.traineddata.gz',
   );
 console.log('本地 OCR Worker、WASM 及中英文语言数据已准备。');

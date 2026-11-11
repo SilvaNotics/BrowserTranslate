@@ -12,6 +12,7 @@ let context: BrowserContext,
   base: string;
 const requests: { path: string; body: Record<string, unknown> }[] = [];
 const errors: string[] = [];
+const warnings: string[] = [];
 test.beforeAll(async () => {
   server = createServer((req, res) => {
     if (req.url === '/favicon.ico') {
@@ -24,6 +25,26 @@ test.beforeAll(async () => {
       res.end(
         '<!doctype html><html lang="en"><head><title>Reading across languages</title><style>body{font:20px Arial,sans-serif;max-width:760px;margin:70px auto;background:#fafaf8;color:#263449}h1{font-size:40px}p{line-height:1.8}canvas{display:block;margin-top:35px;border:1px solid #ddd}</style></head><body><article><h1>Reading across languages</h1><p id="first">Hello world. Language opens a window.</p><p>Keep <a id="link" href="#clicked">this link</a> working.</p><pre>const code = true;</pre><input value="Do not translate"><canvas id="ocr" width="650" height="100"></canvas></article><script>const c=document.querySelector("canvas").getContext("2d");c.fillStyle="white";c.fillRect(0,0,650,100);c.fillStyle="black";c.font="36px Arial";c.fillText("Hello world",30,62);</script></body></html>',
       );
+      return;
+    }
+    if (req.url === '/layout') {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.end(`<!doctype html><html><head><style>
+        body{font:16px/1.5 Arial,sans-serif;margin:40px;color:#263449;background:#fafaf8}
+        main{display:grid;grid-template-columns:220px minmax(0,1fr);gap:32px}
+        nav{display:flex;gap:24px;border-bottom:1px solid #ddd;padding-bottom:20px}
+        .row{display:flex;align-items:center;gap:16px;margin-bottom:24px}
+        .row p{flex:1;min-width:0}
+        .grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+        .icon{width:20px;height:20px;background:#2865dc;flex:none}
+        .label{display:flex;align-items:center;gap:8px}
+        .label > span{font-weight:700}
+        p{margin:0} .card{border:1px solid #ddd;border-radius:12px;padding:20px}
+      </style></head><body><nav><span id="nav-text">Dashboard</span><span>Repositories</span></nav>
+      <main><aside><div class="label" id="flex-text"><i class="icon"></i><span id="source-label">Personal account</span></div><div id="reverse-text" style="display:flex;flex-direction:column-reverse"><span>Reverse layout label</span></div></aside>
+      <article><div class="row" id="row"><p id="row-text">No pull requests found, try a different filter.</p><i class="icon" id="row-icon"></i></div>
+      <div class="grid" id="grid"><p class="card" id="grid-text">Latest from our changelog</p><p class="card">Learn with GitHub</p></div>
+      <table><tr><td id="cell-text">Repository activity</td><td>Updated today</td></tr></table></article></main></body></html>`);
       return;
     }
     const chunks: Buffer[] = [];
@@ -83,7 +104,12 @@ test.beforeAll(async () => {
       '--load-extension=' + extension,
     ],
   });
-  context.on('page', (p) => p.on('pageerror', (e) => errors.push(e.message)));
+  context.on('page', (p) => {
+    p.on('pageerror', (e) => errors.push(e.message));
+    p.on('console', (message) => {
+      if (message.type() === 'warning' || message.type() === 'error') warnings.push(message.text());
+    });
+  });
   worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
   id = worker.url().split('/')[2]!;
 });
@@ -109,12 +135,19 @@ test('供应商配置、连接、划词、整页恢复与截图链路', async ()
   await expect(options.getByText('供应商已保存。', { exact: true })).toBeVisible();
   await options.screenshot({ path: 'artifacts/settings.png', fullPage: true });
   const popup = await context.newPage();
-  await popup.setViewportSize({ width: 380, height: 720 });
+  await popup.setViewportSize({ width: 420, height: 720 });
   await popup.goto('chrome-extension://' + id + '/popup.html');
   await expect(popup.getByRole('heading', { name: '让语言，不再有距离。' })).toBeVisible();
   await popup.getByRole('button', { name: '连接', exact: true }).click();
   await expect(popup.getByRole('status')).toContainText('连接成功');
+  expect(await popup.evaluate(() => document.documentElement.scrollWidth)).toBe(420);
+  expect(await popup.locator('.popup').evaluate((el) => el.getBoundingClientRect().width)).toBe(
+    420,
+  );
   await popup.screenshot({ path: 'artifacts/popup.png', fullPage: true });
+  await popup.emulateMedia({ colorScheme: 'dark' });
+  await popup.screenshot({ path: 'artifacts/popup-dark.png', fullPage: true });
+  await popup.emulateMedia({ colorScheme: 'light' });
   const page = await context.newPage();
   await page.goto(base + '/article');
   await expect(page.getByRole('button', { name: '整页翻译', exact: true })).toBeVisible();
@@ -155,7 +188,8 @@ test('供应商配置、连接、划词、整页恢复与截图链路', async ()
   await page.getByRole('button', { name: '整页翻译', exact: true }).click();
   await expect(page.locator('[data-yijing-translation]')).toHaveCount(3);
   await page.getByRole('button', { name: '仅译文', exact: true }).click();
-  await expect(page.locator('#first')).toBeHidden();
+  await expect(page.locator('#first > [data-yijing-original]')).toBeHidden();
+  await expect(page.locator('#first > [data-yijing-translation]')).toBeVisible();
   await expect(page.locator('[data-yijing-translation] a')).toHaveText('this link');
   await page.getByRole('button', { name: '双语对照', exact: true }).click();
   await expect(page.locator('#first')).toBeVisible();
@@ -196,6 +230,7 @@ test('供应商配置、连接、划词、整页恢复与截图链路', async ()
     timeout: 90000,
   });
   await expect(page.getByLabel('识别原文')).toHaveValue(/Hello world/i);
+  expect(warnings.filter((warning) => warning.includes('Parameter not found'))).toEqual([]);
   const ocrRequests = requests.filter((r) => r.path.endsWith('chat/completions')).slice(before);
   expect(ocrRequests.length).toBe(1);
   expect(JSON.stringify(ocrRequests)).not.toContain('data:image');
@@ -213,6 +248,54 @@ test('供应商配置、连接、划词、整页恢复与截图链路', async ()
   await expect(options.locator('html')).toHaveAttribute('data-theme', 'dark');
   await options.screenshot({ path: 'artifacts/settings-dark.png', fullPage: true });
   expect(errors).toEqual([]);
+});
+
+test('双语始终排在原文下方，保留 flex、grid 和表格布局', async () => {
+  const popup = await context.newPage();
+  await popup.goto('chrome-extension://' + id + '/popup.html');
+  await popup.getByRole('switch', { name: '整页翻译', exact: true }).check();
+  const page = await context.newPage();
+  await page.goto(base + '/layout');
+  const original = await page.locator('main').innerHTML();
+  const rowIcon = await page.locator('#row-icon').boundingBox();
+  await page.getByRole('button', { name: '整页翻译', exact: true }).click();
+  for (const selector of [
+    '#nav-text',
+    '#flex-text',
+    '#reverse-text',
+    '#row-text',
+    '#grid-text',
+    '#cell-text',
+  ]) {
+    const translation = page.locator(selector + ' > [data-yijing-translation]');
+    await expect(translation).toBeVisible();
+    const positions = await page.locator(selector).evaluate((el) => {
+      const translated = el.querySelector('[data-yijing-translation]')!;
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.setEndBefore(translated);
+      const source = range.getBoundingClientRect();
+      const target = translated.getBoundingClientRect();
+      return {
+        sourceBottom: source.bottom,
+        targetTop: target.top,
+        border: getComputedStyle(translated).borderInlineStartWidth,
+      };
+    });
+    expect(positions.targetTop).toBeGreaterThanOrEqual(positions.sourceBottom - 1);
+    expect(positions.border).toBe('0px');
+  }
+  expect(await page.locator('#row > *').count()).toBe(2);
+  expect(await page.locator('#grid > *').count()).toBe(2);
+  await expect(page.locator('#flex-text > #source-label')).toHaveCSS('font-weight', '700');
+  const translatedIcon = await page.locator('#row-icon').boundingBox();
+  expect(translatedIcon!.x).toBeCloseTo(rowIcon!.x, 0);
+  await page.screenshot({ path: 'artifacts/bilingual-layout.png', fullPage: true });
+  await page.getByRole('button', { name: '仅译文', exact: true }).click();
+  await expect(page.locator('#row-text > [data-yijing-original]')).toBeHidden();
+  await expect(page.locator('#row-text > [data-yijing-translation]')).toBeVisible();
+  await page.getByRole('button', { name: '恢复原文', exact: true }).click();
+  expect(await page.locator('main').innerHTML()).toBe(original);
 });
 
 test('视觉识别仅上传裁剪图片，联网解释引用有效来源，搜索失败明确降级', async () => {

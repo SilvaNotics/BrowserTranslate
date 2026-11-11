@@ -3,6 +3,9 @@ export interface Block {
   element: HTMLElement;
   text: string;
   translation?: HTMLElement;
+  original?: HTMLElement;
+  hadInlineStyle?: boolean;
+  layout?: { property: string; value: string; priority: string }[];
   originalHidden: boolean;
   originalAria: string | null;
 }
@@ -33,9 +36,10 @@ export function readBlockText(element: HTMLElement): string {
       const style = getComputedStyle(node);
       if (
         node.matches(forbidden) ||
-        node.hidden ||
-        node.getAttribute('aria-hidden') === 'true' ||
-        style.display === 'none' ||
+        (!node.hasAttribute('data-yijing-original') &&
+          (node.hidden ||
+            node.getAttribute('aria-hidden') === 'true' ||
+            style.display === 'none')) ||
         style.visibility === 'hidden' ||
         style.contentVisibility === 'hidden'
       )
@@ -56,6 +60,7 @@ export function collectBlocks(root: HTMLElement, known = new WeakSet<HTMLElement
     if (
       known.has(element) ||
       element.closest(forbidden) ||
+      element.closest('[data-yijing-original]') ||
       element.querySelector(forbidden) ||
       element.hidden ||
       element.getAttribute('aria-hidden') === 'true'
@@ -89,25 +94,60 @@ export function collectBlocks(root: HTMLElement, known = new WeakSet<HTMLElement
 export function showTranslation(block: Block, text: string, mode: 'bilingual' | 'translation') {
   if (!block.element.isConnected) return;
   if (!block.translation) {
-    block.translation = document.createElement('div');
+    const style = getComputedStyle(block.element);
+    block.translation = document.createElement('span');
     block.translation.dataset.yijingTranslation = block.id;
     block.translation.setAttribute('lang', '');
     Object.assign(block.translation.style, {
+      all: 'unset',
+      display: 'block',
       whiteSpace: 'pre-wrap',
-      margin: '0.4em 0 0.8em',
-      lineHeight: '1.65',
+      overflowWrap: 'anywhere',
+      margin: '0.3em 0 0',
+      lineHeight: 'inherit',
       fontSize: 'inherit',
       color: 'inherit',
-      borderInlineStart: '2px solid #4385ec',
-      paddingInlineStart: '0.7em',
+      minWidth: '0',
+      maxWidth: '100%',
+      boxSizing: 'border-box',
     });
-    block.element.after(block.translation);
+    if (style.display === 'flex' || style.display === 'inline-flex') {
+      block.hadInlineStyle = block.element.hasAttribute('style');
+      block.layout = ['flex-wrap'].map((property) => ({
+        property,
+        value: block.element.style.getPropertyValue(property),
+        priority: block.element.style.getPropertyPriority(property),
+      }));
+      block.element.style.setProperty('flex-wrap', 'wrap', 'important');
+      // Row flex items must start a new line; column flex already stacks children.
+      if (!style.flexDirection.startsWith('column')) block.translation.style.flexBasis = '100%';
+      block.translation.style.order =
+        style.flexDirection === 'column-reverse' ? '-2147483647' : '2147483647';
+    }
+    if (style.display === 'grid' || style.display === 'inline-grid') {
+      block.translation.style.gridColumn = '1 / -1';
+      const rows = style.gridTemplateRows.split(' ').length;
+      block.translation.style.gridRowStart = String(rows + 1);
+      block.translation.style.order = '2147483647';
+    }
+    block.element.append(block.translation);
   }
   block.translation.textContent = text;
   if (mode === 'translation') {
+    if (!block.original) {
+      block.original = document.createElement('span');
+      block.original.dataset.yijingOriginal = block.id;
+      block.original.hidden = true;
+      block.original.style.setProperty('display', 'none', 'important');
+      block.original.setAttribute('aria-hidden', 'true');
+      block.original.append(
+        ...Array.from(block.element.childNodes).filter((node) => node !== block.translation),
+      );
+      block.element.prepend(block.original);
+    }
     const links = document.createElement('span');
     Object.assign(links.style, { display: 'block', fontSize: '0.85em', marginTop: '0.35em' });
-    for (const original of block.element.querySelectorAll<HTMLAnchorElement>('a[href]')) {
+    for (const original of block.original!.querySelectorAll<HTMLAnchorElement>('a[href]')) {
       let url: URL;
       try {
         url = new URL(original.href, document.baseURI);
@@ -127,16 +167,26 @@ export function showTranslation(block: Block, text: string, mode: 'bilingual' | 
       links.append(link);
     }
     if (links.childElementCount) block.translation.append(links);
+  } else if (block.original) {
+    block.original.replaceWith(...block.original.childNodes);
+    block.original = undefined;
   }
-  block.element.hidden = mode === 'translation' || block.originalHidden;
-  if (mode === 'translation') block.element.setAttribute('aria-hidden', 'true');
-  else if (block.originalAria === null) block.element.removeAttribute('aria-hidden');
-  else block.element.setAttribute('aria-hidden', block.originalAria);
 }
 export function restoreBlocks(blocks: Block[]) {
   for (const block of blocks) {
     block.translation?.remove();
     block.translation = undefined;
+    if (block.original) {
+      block.original.replaceWith(...block.original.childNodes);
+      block.original = undefined;
+    }
+    for (const { property, value, priority } of block.layout ?? []) {
+      if (value) block.element.style.setProperty(property, value, priority);
+      else block.element.style.removeProperty(property);
+    }
+    if (block.layout && !block.hadInlineStyle && block.element.style.length === 0)
+      block.element.removeAttribute('style');
+    block.layout = undefined;
     block.element.hidden = block.originalHidden;
     if (block.originalAria === null) block.element.removeAttribute('aria-hidden');
     else block.element.setAttribute('aria-hidden', block.originalAria);

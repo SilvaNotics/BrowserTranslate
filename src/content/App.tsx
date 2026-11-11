@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Camera, LoaderCircle, Play, RotateCcw, Square, X } from 'lucide-react';
+import { Camera, Languages, LoaderCircle, Play, RotateCcw, Square, X } from 'lucide-react';
 import { rpc, taskId } from '../core/rpc';
 import type { PublicSettings, Region } from '../core/types';
 import { bindSelectionShortcut } from './shortcuts';
@@ -252,6 +252,10 @@ export function ContentApp({ host }: { host: HTMLElement }) {
         <button
           className="yj-ball"
           aria-label="整页翻译"
+          aria-expanded={menu}
+          aria-controls="yj-page-menu"
+          data-active={pageState.active}
+          aria-busy={pageState.running && pageState.done < pageState.total}
           title="译境 · 整页翻译"
           style={{ right: ball.right, top: ball.top }}
           onPointerDown={(e) => {
@@ -285,17 +289,18 @@ export function ContentApp({ host }: { host: HTMLElement }) {
           }}
         >
           {pageState.running && pageState.done < pageState.total ? (
-            <LoaderCircle size={20} />
+            <LoaderCircle size={20} className="yj-spin" />
           ) : (
-            '译'
+            <Languages size={21} strokeWidth={1.8} />
           )}
         </button>
       )}
       {menu && settings?.features.page && (
         <section
+          id="yj-page-menu"
           className="yj-menu yj-panel"
           style={{
-            right: Math.min(ball.right + 52, innerWidth - 276),
+            right: Math.max(8, Math.min(ball.right + 52, innerWidth - 304)),
             top: Math.max(8, Math.min(ball.top, innerHeight - 290)),
           }}
           role="dialog"

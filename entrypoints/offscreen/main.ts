@@ -32,6 +32,8 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         workerPath: chrome.runtime.getURL('ocr/worker.min.js'),
         corePath: chrome.runtime.getURL('ocr/core/'),
         langPath: chrome.runtime.getURL('ocr/lang/'),
+        // Separate LSTM data from the legacy-inclusive data cached by older builds.
+        cachePath: 'yijing-lstm-v1',
         workerBlobURL: false,
         gzip: true,
         errorHandler: () => {},

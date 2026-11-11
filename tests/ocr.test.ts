@@ -1,4 +1,15 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { readFile } from 'node:fs/promises';
+import { gunzipSync } from 'node:zlib';
+import { execFileSync } from 'node:child_process';
+execFileSync(process.execPath, ['scripts/prepare-ocr.mjs']);
+it.each(['eng', 'chi_sim'])('打包的 %s 语言数据只包含 LSTM 组件', async (language) => {
+  const data = gunzipSync(await readFile(`public/ocr/lang/${language}.traineddata.gz`));
+  // Traineddata contains an entry count followed by little-endian int64 offsets.
+  // Component 3 is the legacy character classifier, absent from LSTM-only data.
+  expect(data.readBigInt64LE(4 + 3 * 8)).toBe(-1n);
+  expect(data.readBigInt64LE(4 + 17 * 8)).toBeGreaterThan(0n);
+});
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.resetModules();

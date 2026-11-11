@@ -230,6 +230,9 @@ button svg {
 .yj-loading svg {
   animation: yj-spin 1s linear infinite;
 }
+.yj-spin {
+  animation: yj-spin 1s linear infinite;
+}
 @keyframes yj-spin {
   to {
     transform: rotate(360deg);
@@ -247,23 +250,37 @@ button svg {
   top: 45vh;
   width: 42px;
   height: 42px;
-  border-radius: 50%;
-  background: #2865dc;
-  color: #fff;
-  box-shadow: 0 5px 20px #1d54bf45;
-  border: 3px solid #ffffffc9;
+  border-radius: 14px;
+  background: var(--yj-bg);
+  color: var(--yj-blue);
+  box-shadow: 0 3px 14px #142b4d1a;
+  border: 1px solid var(--yj-line);
   touch-action: none;
   pointer-events: auto;
-  font-size: 20px;
-  font-weight: 700;
+  transition:
+    background 0.15s,
+    box-shadow 0.15s;
   z-index: 2;
 }
 .yj-ball:hover {
-  background: #1e55c0;
+  background: var(--yj-soft);
+  box-shadow: 0 5px 18px #142b4d26;
+}
+.yj-ball[data-active='true']::after {
+  content: '';
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--yj-blue);
 }
 .yj-menu {
   position: fixed;
-  width: 264px;
+  width: min(288px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow: auto;
   padding: 16px;
   pointer-events: auto;
 }

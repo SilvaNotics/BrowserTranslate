@@ -1,5 +1,10 @@
 import { it, expect, vi } from 'vitest';
-import { collectBlocks, showTranslation, restoreBlocks } from '../src/content/page-dom';
+import {
+  collectBlocks,
+  readBlockText,
+  showTranslation,
+  restoreBlocks,
+} from '../src/content/page-dom';
 import { bindSelectionShortcut } from '../src/content/shortcuts';
 it('跳过隐藏祖先下的文字，但保留屏幕外的正常段落', () => {
   document.body.innerHTML =
@@ -44,12 +49,64 @@ it('提取段落不重复，不处理代码和表单，恢复后原链接事件�
   showTranslation(blocks[0]!, '你好，世界。', 'bilingual');
   expect(document.body.textContent).toContain('你好，世界。');
   showTranslation(blocks[0]!, '你好，世界。', 'translation');
-  expect(blocks[0]!.element.hidden).toBe(true);
+  expect(blocks[0]!.element.querySelector<HTMLElement>('[data-yijing-original]')!.hidden).toBe(
+    true,
+  );
   restoreBlocks(blocks);
   expect(blocks[0]!.element.hidden).toBe(false);
   expect(document.querySelector('a')).toBe(anchor);
   anchor.dispatchEvent(new MouseEvent('click', { cancelable: true }));
   expect(onClick).toHaveBeenCalledOnce();
+});
+it('双语译文留在原文本容器内，扫描不会重复读取译文，恢复保留原节点', () => {
+  document.body.innerHTML =
+    '<div style="display:flex;gap:12px"><p>Hello <a href="/x">world</a>.</p><aside>Other column</aside></div>';
+  const paragraph = document.querySelector('p')!;
+  const link = document.querySelector('a')!;
+  const blocks = collectBlocks(document.body);
+  const block = blocks.find((item) => item.element === paragraph)!;
+  showTranslation(block, '你好，世界。', 'bilingual');
+  expect(block.translation!.parentElement).toBe(paragraph);
+  expect(paragraph.querySelector(':scope > a')).toBe(link);
+  expect(paragraph.parentElement!.children).toHaveLength(2);
+  expect(readBlockText(paragraph)).toBe('Hello world.');
+  expect(block.translation!.style.borderInlineStart).toBe('');
+  showTranslation(block, '你好，世界。', 'translation');
+  expect(paragraph.hidden).toBe(false);
+  expect(block.translation!.parentElement).toBe(paragraph);
+  showTranslation(block, '你好，世界。', 'bilingual');
+  expect(paragraph.querySelector('[data-yijing-original]')).toBeNull();
+  expect(paragraph.querySelector(':scope > a')).toBe(link);
+  restoreBlocks(blocks);
+  expect(paragraph.innerHTML).toBe('Hello <a href="/x">world</a>.');
+  expect(paragraph.querySelector('a')).toBe(link);
+});
+it('倒序纵向 flex 容器仍将译文放在原文下方', () => {
+  document.body.innerHTML =
+    '<div style="display:flex;flex-direction:column-reverse">Original label</div>';
+  const block = collectBlocks(document.body)[0]!;
+  showTranslation(block, '标签译文', 'bilingual');
+  expect(Number(block.translation!.style.order)).toBeLessThan(0);
+  restoreBlocks([block]);
+});
+it('横向 flex 文本的译文单独换行，恢复时还原原来的内联样式', () => {
+  document.body.innerHTML =
+    '<div id="label" style="display:flex;flex-wrap:nowrap !important">Original label</div>';
+  const block = collectBlocks(document.body)[0]!;
+  showTranslation(block, '标签译文', 'bilingual');
+  expect(block.element.style.flexWrap).toBe('wrap');
+  expect(block.translation!.style.flexBasis).toBe('100%');
+  restoreBlocks([block]);
+  expect(block.element.style.flexWrap).toBe('nowrap');
+  expect(block.element.style.getPropertyPriority('flex-wrap')).toBe('important');
+});
+it('动态扫描不会把导航内的原文包装当成新段落再次翻译', () => {
+  document.body.innerHTML = '<nav><span>Dashboard</span><span>Repositories</span></nav>';
+  const known = new WeakSet<HTMLElement>();
+  const blocks = collectBlocks(document.body, known);
+  for (const block of blocks) showTranslation(block, '导航译文', 'bilingual');
+  expect(collectBlocks(document.body, known)).toHaveLength(0);
+  restoreBlocks(blocks);
 });
 it('Ctrl 必须持续 400ms，组合键和释放均取消', () => {
   vi.useFakeTimers();

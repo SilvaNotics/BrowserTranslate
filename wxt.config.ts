@@ -3,7 +3,7 @@ export default defineConfig({
   modules: ['@wxt-dev/module-react'],
   manifest: {
     name: '译境 · BrowserTranslate',
-    version: '0.1.0',
+    version: '0.1.1',
     minimum_chrome_version: '124',
     description: '使用自己的模型，划词、整页和截图翻译。内置 Exa 联网词典解释。',
     permissions: ['storage', 'activeTab', 'offscreen'],

@@ -46,7 +46,7 @@ export async function searchExa(
   apiKey: string,
   signal?: AbortSignal,
 ): Promise<Source[]> {
-  const client = new Client({ name: 'BrowserTranslate', version: '0.1.0' });
+  const client = new Client({ name: 'BrowserTranslate', version: '0.1.1' });
   const transport = new StreamableHTTPClientTransport(new URL('https://mcp.exa.ai/mcp'), {
     requestInit: { headers: apiKey ? { 'x-api-key': apiKey } : {}, credentials: 'omit' },
   });

@@ -177,7 +177,7 @@ function Options() {
             <br />
             让工具回归简单。
           </p>
-          <span>译境 v0.1.0</span>
+          <span>译境 v0.1.1</span>
         </div>
       </aside>
       <main className="settings-main">
