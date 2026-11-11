@@ -16,7 +16,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck && npm test
       - run: npm run zip
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install --with-deps chromium || npx playwright install chromium
       - run: npm run test:e2e
       - name: Publish developer-mode package
         env:
