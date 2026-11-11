@@ -616,6 +616,7 @@ small {
 }
 .model-grid {
   display: grid;
+  align-items: start;
   grid-template-columns: 180px minmax(0, 1fr);
   gap: 9px;
 }

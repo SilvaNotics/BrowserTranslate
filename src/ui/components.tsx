@@ -81,7 +81,8 @@ export function ModelNameInput({
   onCommit?: (model: string) => void;
 }) {
   const [manual, setManual] = useState(false);
-  const showManual = manual || (!!value && !models.includes(value)) || !models.length;
+  const showManual =
+    !disabled && (manual || (!!value && !models.includes(value)) || !models.length);
   return (
     <div className="model-name-input">
       <select

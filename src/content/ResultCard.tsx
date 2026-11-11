@@ -256,12 +256,9 @@ export function ResultCard({
           className={online ? 'yj-secondary yj-web active' : 'yj-secondary yj-web'}
           aria-label="联网搜索"
           aria-pressed={online}
-          title={online ? '联网模式已启用，点击搜索并解释' : '启用联网模式'}
+          title={online ? '联网模式已启用，点击关闭' : '启用联网模式，再点击“详细”搜索'}
           disabled={busy || !original.trim() || result.loading}
-          onClick={() => {
-            if (online) void explain(true);
-            else setOnline(true);
-          }}
+          onClick={() => setOnline(!online)}
         >
           <Globe2 size={16} />
         </button>

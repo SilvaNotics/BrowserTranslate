@@ -610,6 +610,10 @@ test('视觉识别仅上传裁剪图片，联网解释引用有效来源，搜�
   await expect(page.getByRole('button', { name: '重试联网查证' })).toHaveCount(0);
   await page.screenshot({ path: 'artifacts/dictionary-armed.png', fullPage: true });
   await webSearch.click();
+  await expect(webSearch).toHaveAttribute('aria-pressed', 'false');
+  expect(requests).toHaveLength(beforeArm);
+  await webSearch.click();
+  await page.getByRole('button', { name: '详细', exact: true }).click();
   await expect(page.getByText('已检索相关网络资料 · 请结合来源判断')).toBeVisible();
   await expect(page.locator('a[href="https://example.com/dictionary"]')).toBeVisible();
   await expect(page.locator('.yj-detail-text')).not.toContainText('[99]');

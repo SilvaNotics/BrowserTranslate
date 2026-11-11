@@ -456,7 +456,7 @@ function Options() {
           </div>
           <div className="settings-card">
             <p className="section-description">
-              首次点击地球图标会启用联网模式并变深色，再次点击地球或点击“详细”，由 Exa
+              点击地球图标启用联网模式并变深色，再点击“详细”，由 Exa
               搜索相关资料，再让模型结合上下文解释并列出出处。
             </p>
             <div className="field">
