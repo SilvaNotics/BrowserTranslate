@@ -11,7 +11,8 @@ export interface Block {
   originalAria: string | null;
 }
 const forbidden =
-  'script,style,noscript,pre,code,kbd,samp,textarea,input,select,button,svg,canvas,[contenteditable]:not([contenteditable="false"]),[data-yijing-ui],[data-yijing-translation],[translate="no"]';
+  'script,style,noscript,pre,textarea,input,select,button,svg,canvas,[contenteditable]:not([contenteditable="false"]),[data-yijing-ui],[data-yijing-translation],[translate="no"]';
+const blankInput = 'input:not([type]),input[type="text"],input[type="search"]';
 function isVisible(element: HTMLElement) {
   if (getComputedStyle(element).visibility === 'hidden') return false;
   for (let current: HTMLElement | null = element; current; current = current.parentElement) {
@@ -36,7 +37,7 @@ export function readBlockText(element: HTMLElement): string {
     if (node instanceof HTMLElement && node !== element) {
       const style = getComputedStyle(node);
       if (
-        node.matches(forbidden) ||
+        (node.matches(forbidden) && !node.matches(blankInput)) ||
         (!node.hasAttribute('data-yijing-original') &&
           (node.hidden ||
             node.getAttribute('aria-hidden') === 'true' ||
@@ -45,6 +46,18 @@ export function readBlockText(element: HTMLElement): string {
         style.contentVisibility === 'hidden'
       )
         return;
+      // Represent exercise blanks without reading any form value.
+      const underlinedBlank =
+        node.matches('span,u') &&
+        !node.textContent?.trim() &&
+        !node.children.length &&
+        (style.textDecorationLine.includes('underline') ||
+          (parseFloat(style.borderBottomWidth) > 0 &&
+            !['none', 'hidden'].includes(style.borderBottomStyle)));
+      if (node.matches(blankInput) || underlinedBlank) {
+        parts.push(' 【待补全】 ');
+        return;
+      }
       if (node.tagName === 'BR') parts.push(' ');
     }
     for (const child of node.childNodes) walk(child);
@@ -60,9 +73,9 @@ export function collectBlocks(root: HTMLElement, known = new WeakSet<HTMLElement
   for (const element of candidates) {
     if (
       known.has(element) ||
-      element.closest(forbidden) ||
+      element.closest(forbidden + ',code,kbd,samp') ||
       element.closest('[data-yijing-original]') ||
-      element.querySelector(forbidden) ||
+      Array.from(element.querySelectorAll(forbidden)).some((node) => !node.matches(blankInput)) ||
       element.hidden ||
       element.getAttribute('aria-hidden') === 'true'
     )
@@ -80,6 +93,20 @@ export function collectBlocks(root: HTMLElement, known = new WeakSet<HTMLElement
       continue;
     const text = readBlockText(element);
     if (text.length < 2 || text.length > 6000 || !/[\p{L}\p{N}]/u.test(text)) continue;
+    if (element.querySelector('code,kbd,samp')) {
+      const prose = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
+        acceptNode: (node) => {
+          const parent = node.parentElement;
+          return parent &&
+            /[\p{L}\p{N}]/u.test(node.textContent ?? '') &&
+            !parent.closest(forbidden + ',code,kbd,samp') &&
+            isVisible(parent)
+            ? NodeFilter.FILTER_ACCEPT
+            : NodeFilter.FILTER_REJECT;
+        },
+      });
+      if (!prose.nextNode()) continue;
+    }
     if (!isVisible(element)) continue;
     known.add(element);
     output.push({

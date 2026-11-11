@@ -30,7 +30,6 @@ export class PageController {
   private known = new WeakSet<HTMLElement>();
   private queue: Block[] = [];
   private failed = new Set<Block>();
-  private pending = new Set<string>();
   private translated = new Map<string, string>();
   private generation = 0;
   private observer?: MutationObserver;
@@ -95,10 +94,10 @@ export class PageController {
     this.pump();
   }
   private pump() {
-    while (this.state.running && this.pending.size < 2 && this.queue.length) {
+    while (this.state.running && this.inFlight.size < 3 && this.queue.length) {
       const batch: Block[] = [];
       let size = 0;
-      while (this.queue.length && batch.length < 6) {
+      while (this.queue.length && batch.length < 12) {
         const next = this.queue[0]!;
         if (batch.length && size + next.text.length > 6000) break;
         this.queue.shift();
@@ -113,7 +112,6 @@ export class PageController {
   private async run(batch: Block[]) {
     const id = taskId(),
       generation = this.generation;
-    this.pending.add(id);
     this.inFlight.set(id, batch);
     try {
       const results = await rpc<Segment[]>({
@@ -139,7 +137,6 @@ export class PageController {
         this.state.error = error instanceof Error ? error.message : '翻译失败';
       }
     } finally {
-      this.pending.delete(id);
       this.inFlight.delete(id);
       if (generation === this.generation) this.pump();
     }
@@ -169,9 +166,8 @@ export class PageController {
     this.observer = undefined;
     clearTimeout(this.timer);
     for (const batch of this.inFlight.values()) this.queue.unshift(...batch);
+    for (const id of this.inFlight.keys()) void rpc({ type: 'cancel', id: taskId(), taskId: id });
     this.inFlight.clear();
-    for (const id of this.pending) void rpc({ type: 'cancel', id: taskId(), taskId: id });
-    this.pending.clear();
     this.emit();
   }
   restore() {

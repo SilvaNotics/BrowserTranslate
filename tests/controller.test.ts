@@ -2,8 +2,46 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { PageController } from '../src/content/page-controller';
 import type { Response, Segment } from '../src/core/types';
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   document.body.innerHTML = '';
+});
+it('短段落组成的长页面在两轮请求内完成，仍遵守每批的接口限制', async () => {
+  vi.useFakeTimers();
+  document.body.innerHTML = Array.from(
+    { length: 55 },
+    (_, i) => `<p>Technical paragraph ${i} about socket programming.</p>`,
+  ).join('');
+  vi.stubGlobal('chrome', {
+    runtime: {
+      sendMessage: (m: { type: string; segments: Segment[] }) => {
+        if (m.type !== 'page:batch') return Promise.resolve({ ok: true, data: true });
+        expect(m.segments.length).toBeLessThanOrEqual(12);
+        expect(
+          m.segments.reduce((size, segment) => size + segment.text.length, 0),
+        ).toBeLessThanOrEqual(10000);
+        return new Promise((resolve) =>
+          setTimeout(
+            () =>
+              resolve({
+                ok: true,
+                data: m.segments.map((segment) => ({ ...segment, text: '译文：' + segment.text })),
+              }),
+            100,
+          ),
+        );
+      },
+    },
+  });
+  const controller = new PageController(() => {});
+  try {
+    controller.start('translation');
+    await vi.advanceTimersByTimeAsync(200);
+    expect(controller.state).toMatchObject({ done: 55, total: 55, failed: 0 });
+    expect(document.querySelectorAll('[data-yijing-translation]')).toHaveLength(55);
+  } finally {
+    controller.restore();
+  }
 });
 it('虚拟列表复用原节点时更新译文，原节点移除后清除残留译文', async () => {
   document.body.innerHTML = '<p>First revision</p>';

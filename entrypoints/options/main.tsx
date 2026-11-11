@@ -12,7 +12,6 @@ import {
   Pencil,
   Plus,
   Server,
-  Settings2,
   ShieldCheck,
   Trash2,
   X,
@@ -177,7 +176,7 @@ function Options() {
             <br />
             让工具回归简单。
           </p>
-          <span>译境 v0.1.1</span>
+          <span>译境 v{chrome.runtime.getManifest().version}</span>
         </div>
       </aside>
       <main className="settings-main">
@@ -461,8 +460,8 @@ function Options() {
           </div>
           <div className="settings-card">
             <p className="section-description">
-              点击翻译小窗的“详细”，由 Exa
-              搜索相关资料，再让模型结合上下文解释并列出出处。普通翻译不会触发搜索。
+              “详细”仅使用模型解释；点击它旁边的地球图标才会由 Exa
+              搜索相关资料，再让模型结合上下文解释并列出出处。
             </p>
             <div className="field">
               <label>

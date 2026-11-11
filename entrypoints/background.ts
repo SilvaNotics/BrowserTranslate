@@ -52,7 +52,7 @@ export default defineBackground(() => {
     return '请在网页中拖动框选区域，按 Esc 取消。';
   }
   async function handle(
-    m: Request,
+    m: Exclude<Request, { type: 'cancel' }>,
     sender: chrome.runtime.MessageSender,
     signal: AbortSignal,
   ): Promise<unknown> {
@@ -102,11 +102,15 @@ export default defineBackground(() => {
         const { provider, model } = resolveModel(settings, 'detail');
         let sources: Source[] = [];
         let warning: string | undefined;
-        try {
-          sources = await searchExa(text, settings.exaApiKey, signal);
-        } catch {
-          if (signal.aborted) throw new Error('任务已取消。');
-          warning = '未完成联网查证：搜索限流、超时或暂无结果。可重试或在设置中填写 Exa API Key。';
+        if (m.online === true) {
+          try {
+            sources = await searchExa(text, settings.exaApiKey, signal);
+          } catch {
+            if (signal.aborted) throw new Error('任务已取消。');
+          }
+          if (!sources.length)
+            warning =
+              '未完成联网查证：搜索限流、超时或暂无结果。可重试或在设置中填写 Exa API Key。';
         }
         const prompt =
           '你是严谨的语境词典，以' +
@@ -202,8 +206,6 @@ export default defineBackground(() => {
           signal.removeEventListener('abort', cancel);
         }
       }
-      case 'cancel':
-        return true;
     }
   }
   chrome.runtime.onMessage.addListener((message, sender, respond) => {

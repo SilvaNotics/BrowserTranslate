@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { BookOpen, Check, Copy, LoaderCircle, Pin, RefreshCw, X } from 'lucide-react';
+import { BookOpen, Check, Copy, Globe2, LoaderCircle, Pin, RefreshCw, X } from 'lucide-react';
 import { rpc, taskId } from '../core/rpc';
 import type { DetailResult } from '../core/types';
 export interface Result {
@@ -26,6 +26,7 @@ export function ResultCard({
     [copied, setCopied] = useState(false),
     [detail, setDetail] = useState<DetailResult>(),
     [busy, setBusy] = useState(false),
+    [online, setOnline] = useState(false),
     [error, setError] = useState(''),
     [original, setOriginal] = useState(result.original);
   const [position, setPosition] = useState({
@@ -70,8 +71,10 @@ export function ResultCard({
       window.removeEventListener('resize', resize);
     };
   }, []);
-  async function explain() {
+  async function explain(useWeb = false) {
     setBusy(true);
+    setOnline(useWeb);
+    setDetail(undefined);
     setError('');
     const id = taskId();
     detailTask.current = id;
@@ -81,10 +84,11 @@ export function ResultCard({
         id,
         text: original,
         context: result.context,
+        online: useWeb,
       });
       if (detailTask.current === id) setDetail(resultDetail);
     } catch (e) {
-      setError(e instanceof Error ? e.message : '解释失败');
+      if (detailTask.current === id) setError(e instanceof Error ? e.message : '解释失败');
     } finally {
       if (detailTask.current === id) setBusy(false);
     }
@@ -178,15 +182,17 @@ export function ResultCard({
             {busy && (
               <p className="yj-loading">
                 <LoaderCircle size={15} />
-                正在搜索资料并解释…
+                {online ? '正在搜索资料并解释…' : '正在解释…'}
               </p>
             )}
             {error && <p className="yj-error">{error}</p>}
             {detail && (
               <>
                 <p className="yj-detail-text">{detail.text}</p>
-                <p className={detail.verified ? 'yj-verification' : 'yj-warning'}>
-                  {detail.verified ? '已检索相关网络资料 · 请结合来源判断' : detail.warning}
+                <p className={detail.warning ? 'yj-warning' : 'yj-verification'}>
+                  {detail.verified
+                    ? '已检索相关网络资料 · 请结合来源判断'
+                    : detail.warning || '模型解释 · 未联网搜索'}
                 </p>
                 {detail.sources.map((s) => (
                   <a
@@ -200,8 +206,8 @@ export function ResultCard({
                     <span>{new URL(s.url).hostname} ↗</span>
                   </a>
                 ))}
-                {!detail.verified && (
-                  <button className="yj-link" onClick={() => void explain()}>
+                {online && !detail.verified && (
+                  <button className="yj-link" onClick={() => void explain(true)}>
                     重试联网查证
                   </button>
                 )}
@@ -246,6 +252,15 @@ export function ResultCard({
         >
           <BookOpen size={14} />
           详细
+        </button>
+        <button
+          className="yj-secondary"
+          aria-label="联网搜索"
+          title="联网搜索并解释"
+          disabled={busy || !original.trim() || result.loading}
+          onClick={() => void explain(true)}
+        >
+          <Globe2 size={16} />
         </button>
       </footer>
     </section>

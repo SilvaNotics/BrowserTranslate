@@ -56,7 +56,7 @@ export type Request =
   | { type: 'provider:models'; id: string; provider: Provider }
   | { type: 'provider:test'; id: string; provider: Provider; model: string }
   | { type: 'translate'; id: string; text: string }
-  | { type: 'detail'; id: string; text: string; context?: string }
+  | { type: 'detail'; id: string; text: string; context?: string; online?: boolean }
   | { type: 'page:batch'; id: string; segments: Segment[] }
   | { type: 'capture:start'; id: string }
   | { type: 'capture:recognize'; id: string; region: Region }

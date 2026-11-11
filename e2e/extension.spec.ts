@@ -1,7 +1,8 @@
 import { test, expect, chromium, type BrowserContext, type Worker } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
 import { resolve } from 'node:path';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { gunzipSync } from 'node:zlib';
 import { tmpdir } from 'node:os';
 
 let context: BrowserContext,
@@ -47,6 +48,24 @@ test.beforeAll(async () => {
       <table><tr><td id="cell-text">Repository activity</td><td>Updated today</td></tr></table></article></main></body></html>`);
       return;
     }
+    if (req.url === '/technical') {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.end(`<!doctype html><html><head><style>body{font:20px/1.6 Arial;margin:40px;max-width:900px}</style></head><body><article>
+        <h1>Socket programming</h1>
+        <p id="technical-first">Call <code>bind()</code> before <code>connect()</code>, using <code>struct</code>.</p>
+        <p id="technical-second">The compiler uses <span><code>gcc</code></span>. Press <kbd>Ctrl</kbd> to continue.</p>
+        <pre><code>int main() { return 0; }</code></pre>
+        ${Array.from({ length: 52 }, (_, i) => `<p>Technical paragraph ${i} about socket programming.</p>`).join('')}
+        </article></body></html>`);
+      return;
+    }
+    if (req.url === '/exercise') {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.end(
+        '<!doctype html><html><head><style>body{font:20px/1.6 Arial;margin:40px}p{margin:32px 0}input{border:0;border-bottom:1px solid;width:150px}</style></head><body><article><p id="exercise-input">Thanks to its nine-year <input value="private answer"> education, China has a high literacy rate.</p><p id="exercise-underscore">Thanks to its nine-year ______ education, China has a high literacy rate.</p><p id="exercise-span">Thanks to its nine-year <span style="display:inline-block;border-bottom:1px solid;width:150px">&nbsp;</span> education, China has a high literacy rate.</p></article></body></html>',
+      );
+      return;
+    }
     const chunks: Buffer[] = [];
     req.on('data', (c) => chunks.push(c));
     req.on('end', () => {
@@ -82,7 +101,10 @@ test.beforeAll(async () => {
         text = JSON.stringify(
           (JSON.parse(String(content)) as { id: string; text: string }[]).map((s) => ({
             id: s.id,
-            text: '译文：' + s.text,
+            text:
+              s.text.includes('nine-year') && system.includes('补全')
+                ? '得益于九年【义务】教育，中国的识字率很高。'
+                : '译文：' + s.text,
           })),
         );
       else if (system.includes('语境词典'))
@@ -209,6 +231,39 @@ test('供应商配置、连接、划词、整页恢复与截图链路', async ()
     return { ocrMode: settings.ocrMode };
   });
   expect(publicConfig.ocrMode).toBe('local');
+  // Simulate upgrading a profile that already cached legacy-inclusive language data.
+  const cachedLanguages = await Promise.all(
+    ['eng', 'chi_sim'].map(async (language) => ({
+      language,
+      data: gunzipSync(
+        await readFile(
+          `node_modules/@tesseract.js-data/${language}/4.0.0_best_int/${language}.traineddata.gz`,
+        ),
+      ).toString('base64'),
+    })),
+  );
+  await worker.evaluate(async (languages) => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const open = indexedDB.open('keyval-store', 1);
+      open.onupgradeneeded = () => open.result.createObjectStore('keyval');
+      open.onsuccess = () => resolve(open.result);
+      open.onerror = () => reject(open.error);
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const transaction = database.transaction('keyval', 'readwrite');
+        for (const { language, data } of languages) {
+          const bytes = Uint8Array.from(atob(data), (character) => character.charCodeAt(0));
+          for (const path of ['.', 'yijing-lstm-v1'])
+            transaction.objectStore('keyval').put(bytes, `${path}/${language}.traineddata`);
+        }
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error);
+      });
+    } finally {
+      database.close();
+    }
+  }, cachedLanguages);
   // Trigger the same capture entrypoint used by the popup without relying on a physical numpad.
   await page.keyboard.down('Control');
   await page.keyboard.press('NumpadMultiply');
@@ -248,6 +303,61 @@ test('供应商配置、连接、划词、整页恢复与截图链路', async ()
   await expect(options.locator('html')).toHaveAttribute('data-theme', 'dark');
   await options.screenshot({ path: 'artifacts/settings-dark.png', fullPage: true });
   expect(errors).toEqual([]);
+});
+
+test('仅译文完整处理含内联代码的技术文档，减少整页请求次数', async () => {
+  const popup = await context.newPage();
+  await popup.goto('chrome-extension://' + id + '/popup.html');
+  await popup.getByRole('switch', { name: '整页翻译', exact: true }).check();
+  await popup.close();
+  const page = await context.newPage();
+  await page.goto(base + '/technical');
+  const original = await page.locator('article').innerHTML();
+  const before = requests.length;
+  await page.getByRole('button', { name: '整页翻译', exact: true }).click();
+  await expect(page.locator('[data-yijing-translation]')).toHaveCount(55);
+  await page.getByRole('button', { name: '仅译文', exact: true }).click();
+  for (const selector of ['#technical-first', '#technical-second']) {
+    await expect(page.locator(selector + ' > [data-yijing-original]')).toBeHidden();
+    await expect(page.locator(selector + ' > [data-yijing-translation]')).toBeVisible();
+  }
+  await expect(page.locator('#technical-first > [data-yijing-translation]')).toContainText(
+    'bind() before connect()',
+  );
+  await expect(page.locator('pre')).toHaveText('int main() { return 0; }');
+  const batches = requests.slice(before).filter((request) => {
+    const messages = request.body.messages as { content: string }[] | undefined;
+    return messages?.[0]?.content.includes('JSON数组');
+  });
+  expect(batches.length).toBeLessThanOrEqual(5);
+  await page.screenshot({ path: 'artifacts/technical-translation.png', fullPage: true });
+  await page.getByRole('button', { name: '恢复原文', exact: true }).click();
+  expect(await page.locator('article').innerHTML()).toBe(original);
+  await page.close();
+});
+
+test('填空题按整句翻译并保留补全标记，恢复原文保留输入框', async () => {
+  const page = await context.newPage();
+  await page.goto(base + '/exercise');
+  const original = await page.locator('article').innerHTML();
+  const before = requests.length;
+  await page.getByRole('button', { name: '整页翻译', exact: true }).click();
+  await expect(page.locator('[data-yijing-translation]')).toHaveCount(3);
+  await expect(page.locator('[data-yijing-translation]')).toHaveText(
+    Array(3).fill('得益于九年【义务】教育，中国的识字率很高。'),
+  );
+  expect(JSON.stringify(requests.slice(before))).not.toContain('private answer');
+  await page.getByRole('button', { name: '仅译文', exact: true }).click();
+  await expect(page.locator('#exercise-input input')).toBeHidden();
+  await page.screenshot({
+    path: 'artifacts/exercise-translation.png',
+    fullPage: true,
+    caret: 'initial',
+  });
+  await page.getByRole('button', { name: '恢复原文', exact: true }).click();
+  expect(await page.locator('article').innerHTML()).toBe(original);
+  await expect(page.locator('#exercise-input input')).toHaveValue('private answer');
+  await page.close();
 });
 
 test('双语始终排在原文下方，保留 flex、grid 和表格布局', async () => {
@@ -344,9 +454,12 @@ test('视觉识别仅上传裁剪图片，联网解释引用有效来源，搜�
     };
     scope.__originalFetch = scope.__originalFetch ?? scope.fetch.bind(scope);
     scope.__exaMode = 'success';
+    const counts = scope as typeof scope & { __exaCalls: number };
+    counts.__exaCalls = 0;
     scope.fetch = async (input, init) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (!url.startsWith('https://mcp.exa.ai/')) return scope.__originalFetch!(input, init);
+      counts.__exaCalls++;
       if (scope.__exaMode === 'rate-limit') return new Response('Rate limit', { status: 429 });
       if (init?.method === 'GET' || init?.method === 'DELETE')
         return new Response(null, { status: 405 });
@@ -387,6 +500,17 @@ test('视觉识别仅上传裁剪图片，联网解释引用有效来源，搜�
     };
   });
   await page.getByRole('button', { name: '详细', exact: true }).click();
+  await expect(page.getByText('模型解释 · 未联网搜索', { exact: true })).toBeVisible();
+  expect(
+    await worker.evaluate(
+      () => (globalThis as typeof globalThis & { __exaCalls: number }).__exaCalls,
+    ),
+  ).toBe(0);
+  await expect(page.getByRole('button', { name: '重试联网查证' })).toHaveCount(0);
+  await expect(page.locator('.yj-detail-text')).not.toContainText('[1]');
+  await expect(page.locator('.yj-source')).toHaveCount(0);
+  await page.screenshot({ path: 'artifacts/dictionary-offline.png', fullPage: true });
+  await page.getByRole('button', { name: '联网搜索', exact: true }).click();
   await expect(page.getByText('已检索相关网络资料 · 请结合来源判断')).toBeVisible();
   await expect(page.locator('a[href="https://example.com/dictionary"]')).toBeVisible();
   await expect(page.locator('.yj-detail-text')).not.toContainText('[99]');
@@ -399,7 +523,7 @@ test('视觉识别仅上传裁剪图片，联网解释引用有效来源，搜�
   await worker.evaluate(() => {
     (globalThis as typeof globalThis & { __exaMode: string }).__exaMode = 'rate-limit';
   });
-  await page.getByRole('button', { name: '详细', exact: true }).click();
+  await page.getByRole('button', { name: '联网搜索', exact: true }).click();
   await expect(page.getByText(/未完成联网查证/)).toBeVisible();
   await expect(page.getByRole('button', { name: '重试联网查证' })).toBeVisible();
   await expect(page.locator('.yj-source')).toHaveCount(0);

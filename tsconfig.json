@@ -4,6 +4,8 @@
     "jsx": "react-jsx",
     "strict": true,
     "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "types": ["chrome", "node", "vitest/globals"]
   },
   "include": ["**/*.ts", "**/*.tsx", ".wxt/**/*.d.ts"]
