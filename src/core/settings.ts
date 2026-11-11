@@ -1,4 +1,5 @@
 import type { Settings, PublicSettings, ModelRef, Provider } from './types';
+import { PAGE_LIMITS, validPageConcurrency } from './page';
 export const SETTINGS_KEY = 'settings';
 export function defaultSettings(): Settings {
   return {
@@ -10,6 +11,7 @@ export function defaultSettings(): Settings {
     targetLanguage: '简体中文',
     features: { selection: true, page: true, screenshot: true },
     pageMode: 'bilingual',
+    pageConcurrency: PAGE_LIMITS.defaultConcurrency,
     ocrMode: 'local',
     theme: 'system',
     exaApiKey: '',
@@ -73,7 +75,10 @@ export function validateSettings(value: unknown): Settings {
     typeof s.exaApiKey !== 'string'
   )
     throw new Error('功能配置不正确');
-  return structuredClone(s);
+  const pageConcurrency =
+    s.pageConcurrency === undefined ? PAGE_LIMITS.defaultConcurrency : s.pageConcurrency;
+  if (!validPageConcurrency(pageConcurrency)) throw new Error('整页翻译并发数需要是 1–6 的整数');
+  return structuredClone({ ...s, pageConcurrency });
 }
 export async function loadSettings(): Promise<Settings> {
   const data = await chrome.storage.local.get(SETTINGS_KEY);

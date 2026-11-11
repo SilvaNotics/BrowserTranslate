@@ -34,6 +34,7 @@ jobs:
           name: release-verification
           path: |
             artifacts/*.png
+            artifacts/*.json
             test-results/
   publish:
     needs: release

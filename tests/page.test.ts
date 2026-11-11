@@ -4,7 +4,7 @@ import {
   readBlockText,
   showTranslation,
   restoreBlocks,
-} from '../src/content/page-dom';
+} from '../src/content/page/dom';
 import { bindSelectionShortcut } from '../src/content/shortcuts';
 it('独立代码即使包装在普通容器中也不翻译，含内联代码的自然语言仍翻译', () => {
   document.body.innerHTML =

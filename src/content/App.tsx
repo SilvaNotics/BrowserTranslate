@@ -3,7 +3,7 @@ import { Camera, Languages, LoaderCircle, Play, RotateCcw, Square, X } from 'luc
 import { rpc, taskId } from '../core/rpc';
 import type { PublicSettings, Region } from '../core/types';
 import { bindSelectionShortcut } from './shortcuts';
-import { PageController, type PageState } from './page-controller';
+import { PageController, type PageState } from './page/controller';
 import { ResultCard, type Result } from './ResultCard';
 export function ContentApp({ host }: { host: HTMLElement }) {
   const [settings, setSettings] = useState<PublicSettings>(),
@@ -17,6 +17,7 @@ export function ContentApp({ host }: { host: HTMLElement }) {
     active: false,
     running: false,
     done: 0,
+    skipped: 0,
     total: 0,
     failed: 0,
     error: '',
@@ -31,16 +32,24 @@ export function ContentApp({ host }: { host: HTMLElement }) {
   latestResult.current = result;
   config.current = settings;
   if (!controller.current) controller.current = new PageController(setPageState);
+  useEffect(() => {
+    if (!settings) return;
+    const provider = settings.providers.find((p) => p.id === settings.translation?.providerId);
+    controller.current?.configure({
+      concurrency: settings.pageConcurrency,
+      context: JSON.stringify([settings.targetLanguage, settings.translation, provider?.baseUrl]),
+    });
+  }, [settings]);
   const close = useCallback(() => {
     if (currentTask.current)
-      void rpc({ type: 'cancel', id: taskId(), taskId: currentTask.current });
+      void rpc({ type: 'cancel', id: taskId(), taskId: currentTask.current }).catch(() => {});
     currentTask.current = undefined;
     setResult(undefined);
   }, []);
   const translate = useCallback(
     async (text: string, x: number, y: number, screenshot = false, context?: string) => {
       if (currentTask.current)
-        void rpc({ type: 'cancel', id: taskId(), taskId: currentTask.current });
+        void rpc({ type: 'cancel', id: taskId(), taskId: currentTask.current }).catch(() => {});
       const id = taskId();
       currentTask.current = id;
       setResult({
@@ -314,7 +323,8 @@ export function ContentApp({ host }: { host: HTMLElement }) {
             </button>
           </div>
           <p aria-live="polite">
-            已翻译 {pageState.done} / {pageState.total} 段
+            已处理 {pageState.done} / {pageState.total} 段
+            {pageState.skipped ? ' · ' + pageState.skipped + ' 段已是目标语言' : ''}
             {pageState.failed ? ' · ' + pageState.failed + ' 段失败' : ''}
             {pageState.running && pageState.done === pageState.total ? ' · 等待新内容' : ''}
           </p>

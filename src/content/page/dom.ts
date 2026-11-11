@@ -92,7 +92,7 @@ export function collectBlocks(root: HTMLElement, known = new WeakSet<HTMLElement
     )
       continue;
     const text = readBlockText(element);
-    if (text.length < 2 || text.length > 6000 || !/[\p{L}\p{N}]/u.test(text)) continue;
+    if (text.length < 2 || !/[\p{L}\p{N}]/u.test(text)) continue;
     if (element.querySelector('code,kbd,samp')) {
       const prose = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
         acceptNode: (node) => {

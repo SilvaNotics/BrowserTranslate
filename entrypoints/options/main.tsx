@@ -20,6 +20,7 @@ import { Brand, External, languages, ModelNameInput, ModelPicker } from '../../s
 import { useSettings } from '../../src/ui/use-settings';
 import { rpc, taskId } from '../../src/core/rpc';
 import type { ModelCatalog, Provider } from '../../src/core/types';
+import { PAGE_LIMITS } from '../../src/core/page';
 import '../../src/ui/style.css';
 function SecretInput({
   label,
@@ -416,6 +417,21 @@ function Options() {
                   <option value="bilingual">双语对照</option>
                   <option value="translation">仅译文</option>
                 </select>
+              </div>
+              <div className="field">
+                <label htmlFor="page-concurrency">整页翻译并发上限</label>
+                <select
+                  id="page-concurrency"
+                  value={settings.pageConcurrency}
+                  onChange={(e) => save((s) => ({ ...s, pageConcurrency: Number(e.target.value) }))}
+                >
+                  {Array.from({ length: PAGE_LIMITS.maxConcurrency }, (_, i) => i + 1).map((n) => (
+                    <option key={n} value={n}>
+                      {n} 个请求{n === PAGE_LIMITS.defaultConcurrency ? ' · 默认' : ''}
+                    </option>
+                  ))}
+                </select>
+                <small className="field-hint">按网页分块并发翻译；遇到供应商限流时可调低。</small>
               </div>
               <div className="field">
                 <label htmlFor="ocr-mode">截图文字识别</label>

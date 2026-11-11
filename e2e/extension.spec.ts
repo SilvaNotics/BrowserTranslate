@@ -1,7 +1,7 @@
 import { test, expect, chromium, type BrowserContext, type Worker } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
 import { resolve } from 'node:path';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { gunzipSync } from 'node:zlib';
 import { tmpdir } from 'node:os';
 
@@ -14,6 +14,9 @@ let context: BrowserContext,
 const requests: { path: string; body: Record<string, unknown> }[] = [];
 const errors: string[] = [];
 const warnings: string[] = [];
+let batchDelay = 0;
+let activeBatches = 0;
+let peakBatches = 0;
 test.beforeAll(async () => {
   server = createServer((req, res) => {
     if (req.url === '/favicon.ico') {
@@ -63,6 +66,32 @@ test.beforeAll(async () => {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.end(
         '<!doctype html><html><head><style>body{font:20px/1.6 Arial;margin:40px}p{margin:32px 0}input{border:0;border-bottom:1px solid;width:150px}</style></head><body><article><p id="exercise-input">Thanks to its nine-year <input value="private answer"> education, China has a high literacy rate.</p><p id="exercise-underscore">Thanks to its nine-year ______ education, China has a high literacy rate.</p><p id="exercise-span">Thanks to its nine-year <span style="display:inline-block;border-bottom:1px solid;width:150px">&nbsp;</span> education, China has a high literacy rate.</p></article></body></html>',
+      );
+      return;
+    }
+    if (req.url === '/speed' || req.url === '/long') {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      const paragraphs =
+        req.url === '/speed'
+          ? Array.from(
+              { length: 120 },
+              (_, i) =>
+                `<p>Speed paragraph ${i}. Read across languages with a bounded parallel translation queue.</p>`,
+            ).join('')
+          : '<p>' +
+            Array.from({ length: 600 }, (_, i) => `Sentence number ${i}. `).join('') +
+            '</p>';
+      res.end(
+        '<!doctype html><html><head><style>body{font:20px/1.6 Arial;margin:40px;max-width:900px}</style></head><body><article>' +
+          paragraphs +
+          '</article></body></html>',
+      );
+      return;
+    }
+    if (req.url === '/target-language') {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.end(
+        '<!doctype html><html><body><article><p id="already-zh">这个段落本来就是中文，不需要再次翻译，只有一个 API 名称和 2026 年份。</p><p id="still-en">This English paragraph must still be translated into Chinese.</p><p id="mixed">请阅读 This is a substantial English explanation with 中文 terms.</p><p id="traditional">這個網頁需要轉換為簡體中文。</p></article></body></html>',
       );
       return;
     }
@@ -119,7 +148,15 @@ test.beforeAll(async () => {
         );
       else if (system.includes('语境词典'))
         text = '词义：世界。\n例句：Hello world. [1]\n未支持的引用[99]';
-      res.end(JSON.stringify({ choices: [{ message: { content: text } }] }));
+      const response = JSON.stringify({ choices: [{ message: { content: text } }] });
+      if (system.includes('JSON数组') && batchDelay) {
+        activeBatches++;
+        peakBatches = Math.max(peakBatches, activeBatches);
+        setTimeout(() => {
+          activeBatches--;
+          res.end(response);
+        }, batchDelay);
+      } else res.end(response);
     });
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -150,17 +187,32 @@ test.beforeAll(async () => {
     scope.addEventListener('unhandledrejection', (event) =>
       scope.__runtimeErrors.push(String(event.reason)),
     );
+    for (const method of ['warn', 'error'] as const) {
+      const original = console[method].bind(console);
+      console[method] = (...args) => {
+        scope.__runtimeErrors.push(method + ': ' + args.map(String).join(' '));
+        original(...args);
+      };
+    }
   });
   id = worker.url().split('/')[2]!;
 });
 test.afterAll(async () => {
   try {
-    if (worker)
-      expect(
-        await worker.evaluate(
+    const backgroundErrors = worker
+      ? await worker.evaluate(
           () => (globalThis as typeof globalThis & { __runtimeErrors: string[] }).__runtimeErrors,
-        ),
-      ).toEqual([]);
+        )
+      : [];
+    await writeFile(
+      'artifacts/console-report.json',
+      JSON.stringify(
+        { pageErrors: errors, consoleWarningsAndErrors: warnings, backgroundErrors },
+        null,
+        2,
+      ),
+    );
+    expect(backgroundErrors).toEqual([]);
     expect(errors).toEqual([]);
     expect(warnings).toEqual([]);
   } finally {
@@ -412,8 +464,160 @@ test('仅译文完整处理含内联代码的技术文档，减少整页请求�
     const messages = request.body.messages as { content: string }[] | undefined;
     return messages?.[0]?.content.includes('JSON数组');
   });
-  expect(batches.length).toBeLessThanOrEqual(5);
+  expect(batches.length).toBeLessThanOrEqual(4);
   await page.screenshot({ path: 'artifacts/technical-translation.png', fullPage: true });
+  await page.getByRole('button', { name: '恢复原文', exact: true }).click();
+  expect(await page.locator('article').innerHTML()).toBe(original);
+  await page.close();
+});
+
+test('分块并发遵守设置，优先显示首屏，恢复重翻不重复请求', async () => {
+  const options = await context.newPage();
+  await options.goto('chrome-extension://' + id + '/options.html');
+  await options.getByLabel('整页翻译并发上限', { exact: true }).selectOption('2');
+  await expect
+    .poll(() =>
+      worker.evaluate(
+        async () => (await chrome.storage.local.get('settings')).settings.pageConcurrency,
+      ),
+    )
+    .toBe(2);
+  const page = await context.newPage();
+  await page.goto(base + '/speed');
+  const original = await page.locator('article').innerHTML();
+  batchDelay = 200;
+  peakBatches = 0;
+  const before = requests.length;
+  const started = Date.now();
+  try {
+    await page.getByRole('button', { name: '整页翻译', exact: true }).click();
+    await expect.poll(() => page.locator('[data-yijing-translation]').count()).toBeGreaterThan(0);
+    const firstPaintMs = Date.now() - started;
+    await expect(page.locator('[data-yijing-translation]')).toHaveCount(120);
+    expect(peakBatches).toBe(2);
+    const batches = requests.slice(before).filter((r) => r.path.endsWith('chat/completions'));
+    expect(batches.length).toBeLessThanOrEqual(6);
+    const segments = batches.map(
+      (request) =>
+        JSON.parse((request.body.messages as { content: string }[])[1]!.content) as {
+          id: string;
+          text: string;
+        }[],
+    );
+    expect(
+      segments.every(
+        (batch) => batch.length <= 24 && batch.reduce((size, s) => size + s.text.length, 0) <= 4000,
+      ),
+    ).toBe(true);
+    expect(segments.flat().every((s) => s.id.length <= 2)).toBe(true);
+    expect(segments[0]![0]!.text).toContain('Speed paragraph 0.');
+    await writeFile(
+      'artifacts/page-speed.json',
+      JSON.stringify(
+        {
+          fixtureDelayMs: batchDelay,
+          concurrency: 2,
+          peakBatches,
+          requests: batches.length,
+          paragraphs: 120,
+          firstPaintMs,
+          completeMs: Date.now() - started,
+        },
+        null,
+        2,
+      ),
+    );
+    await page.getByRole('button', { name: '恢复原文', exact: true }).click();
+    expect(await page.locator('article').innerHTML()).toBe(original);
+    const cachedBefore = requests.length;
+    await page.getByRole('button', { name: '整页翻译', exact: true }).click();
+    await expect(page.locator('[data-yijing-translation]')).toHaveCount(120);
+    expect(requests.length).toBe(cachedBefore);
+    await page.screenshot({ path: 'artifacts/page-speed.png' });
+    await options.getByLabel('整页翻译并发上限', { exact: true }).selectOption('4');
+    await expect
+      .poll(() =>
+        worker.evaluate(
+          async () => (await chrome.storage.local.get('settings')).settings.pageConcurrency,
+        ),
+      )
+      .toBe(4);
+    const parallel = await context.newPage();
+    try {
+      await parallel.goto(base + '/speed');
+      peakBatches = 0;
+      const parallelStart = Date.now();
+      await parallel.getByRole('button', { name: '整页翻译', exact: true }).click();
+      await expect(parallel.locator('[data-yijing-translation]')).toHaveCount(120);
+      expect(peakBatches).toBe(4);
+      await writeFile(
+        'artifacts/page-speed-default.json',
+        JSON.stringify(
+          {
+            fixtureDelayMs: batchDelay,
+            concurrency: 4,
+            peakBatches,
+            paragraphs: 120,
+            completeMs: Date.now() - parallelStart,
+          },
+          null,
+          2,
+        ),
+      );
+    } finally {
+      await parallel.close();
+    }
+  } finally {
+    batchDelay = 0;
+    await page.close();
+    await options.getByLabel('整页翻译并发上限', { exact: true }).selectOption('4');
+    await expect
+      .poll(() =>
+        worker.evaluate(
+          async () => (await chrome.storage.local.get('settings')).settings.pageConcurrency,
+        ),
+      )
+      .toBe(4);
+    await options.close();
+  }
+});
+
+test('超过旧字符限制的长段落完整分块翻译并恢复原文', async () => {
+  const page = await context.newPage();
+  await page.goto(base + '/long');
+  const original = await page.locator('article').innerHTML();
+  await page.getByRole('button', { name: '整页翻译', exact: true }).click();
+  const translation = page.locator('[data-yijing-translation]');
+  await expect(translation).toHaveCount(1);
+  await expect(translation).toContainText('Sentence number 0.');
+  await expect(translation).toContainText('Sentence number 599.');
+  await page.getByRole('button', { name: '恢复原文', exact: true }).click();
+  expect(await page.locator('article').innerHTML()).toBe(original);
+  await page.close();
+});
+
+test('目标语言占比高的段落保留原样，混合外语和简繁转换仍翻译', async () => {
+  const page = await context.newPage();
+  await page.goto(base + '/target-language');
+  const original = await page.locator('article').innerHTML();
+  const before = requests.length;
+  await page.getByRole('button', { name: '整页翻译', exact: true }).click();
+  await expect(page.locator('[data-yijing-translation]')).toHaveCount(3);
+  await expect(page.locator('#already-zh [data-yijing-translation]')).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: '整页翻译控制' })).toContainText(
+    '1 段已是目标语言',
+  );
+  const batches = requests.slice(before).filter((r) => r.path.endsWith('chat/completions'));
+  expect(batches).toHaveLength(1);
+  const input = JSON.parse((batches[0]!.body.messages as { content: string }[])[1]!.content) as {
+    text: string;
+  }[];
+  expect(input).toHaveLength(3);
+  expect(input.some((s) => s.text.includes('不需要再次翻译'))).toBe(false);
+  await page.getByRole('button', { name: '仅译文', exact: true }).click();
+  await expect(page.locator('#already-zh')).toHaveText(
+    '这个段落本来就是中文，不需要再次翻译，只有一个 API 名称和 2026 年份。',
+  );
   await page.getByRole('button', { name: '恢复原文', exact: true }).click();
   expect(await page.locator('article').innerHTML()).toBe(original);
   await page.close();

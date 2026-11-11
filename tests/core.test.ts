@@ -11,6 +11,15 @@ import { cropBounds } from '../src/core/capture';
 import { isSupportedUrl } from '../src/core/rpc';
 
 describe('配置与凭据隔离', () => {
+  it('旧配置自动补上整页并发设置，并拒绝超出上限和非整数的并发数', () => {
+    const legacy = { ...defaultSettings() } as Record<string, unknown>;
+    delete legacy.pageConcurrency;
+    expect(validateSettings(legacy).pageConcurrency).toBe(4);
+    for (const value of [0, 7, 1.5, '4', null]) {
+      expect(() => validateSettings({ ...defaultSettings(), pageConcurrency: value })).toThrow();
+    }
+    expect(validateSettings({ ...defaultSettings(), pageConcurrency: 6 }).pageConcurrency).toBe(6);
+  });
   it('多个供应商、手动模型与各用途独立选择', () => {
     const settings = defaultSettings();
     settings.providers = ['a', 'b'].map((id) => ({

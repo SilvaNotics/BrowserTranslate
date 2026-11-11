@@ -30,4 +30,5 @@ jobs:
           name: browser-verification
           path: |
             artifacts/*.png
+            artifacts/*.json
             test-results/

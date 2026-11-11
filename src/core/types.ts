@@ -23,6 +23,7 @@ export interface Settings {
   targetLanguage: string;
   features: { selection: boolean; page: boolean; screenshot: boolean };
   pageMode: 'bilingual' | 'translation';
+  pageConcurrency: number;
   ocrMode: 'local' | 'vision';
   theme: 'system' | 'light' | 'dark';
   exaApiKey: string;
@@ -53,6 +54,7 @@ export interface Region {
 export interface Segment {
   id: string;
   text: string;
+  skipped?: boolean;
 }
 export type Request =
   | { type: 'settings:get'; id: string }

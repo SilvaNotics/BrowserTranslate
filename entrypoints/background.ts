@@ -5,7 +5,8 @@ import {
   resolveModel,
   saveSettings,
 } from '../src/core/settings';
-import { complete, listModels, parseBatch, translationPrompt } from '../src/core/model';
+import { complete, listModels, translationPrompt } from '../src/core/model';
+import { translatePageBatch } from '../src/background/page';
 import { searchExa, sanitizeCitations } from '../src/core/exa';
 import { cropImage } from '../src/core/capture';
 import { isSupportedUrl } from '../src/core/rpc';
@@ -132,30 +133,8 @@ export default defineBackground(() => {
           warning,
         } satisfies DetailResult;
       }
-      case 'page:batch': {
-        if (!settings.features.page) throw new Error('整页翻译已关闭。');
-        if (
-          !Array.isArray(m.segments) ||
-          !m.segments.length ||
-          m.segments.length > 12 ||
-          m.segments.reduce((n, s) => n + textInput(s.text, 6000).length, 0) > 10000 ||
-          new Set(m.segments.map((s) => s.id)).size !== m.segments.length
-        )
-          throw new Error('翻译批次过大或格式不正确。');
-        const { provider, model } = resolveModel(settings, 'translation');
-        const raw = await complete(
-          provider,
-          model,
-          translationPrompt(settings.targetLanguage) +
-            ' 输入为JSON数组，每项包含id和text。只返回JSON数组，保留每项id，将text替换为译文，不增删项目。',
-          JSON.stringify(m.segments),
-          signal,
-        );
-        return parseBatch(
-          raw,
-          m.segments.map((s) => s.id),
-        );
-      }
+      case 'page:batch':
+        return translatePageBatch(settings, m.segments, signal);
       case 'capture:recognize': {
         if (!settings.features.screenshot || !sender.tab?.id || sender.frameId !== 0)
           throw new Error('截图翻译不可用。');
