@@ -4,7 +4,8 @@ export interface Block {
   text: string;
   translation?: HTMLElement;
   original?: HTMLElement;
-  hadInlineStyle?: boolean;
+  originalStyle?: string | null;
+  appliedStyle?: string | null;
   layout?: { property: string; value: string; priority: string }[];
   originalHidden: boolean;
   originalAria: string | null;
@@ -112,13 +113,14 @@ export function showTranslation(block: Block, text: string, mode: 'bilingual' | 
       boxSizing: 'border-box',
     });
     if (style.display === 'flex' || style.display === 'inline-flex') {
-      block.hadInlineStyle = block.element.hasAttribute('style');
+      block.originalStyle = block.element.getAttribute('style');
       block.layout = ['flex-wrap'].map((property) => ({
         property,
         value: block.element.style.getPropertyValue(property),
         priority: block.element.style.getPropertyPriority(property),
       }));
       block.element.style.setProperty('flex-wrap', 'wrap', 'important');
+      block.appliedStyle = block.element.getAttribute('style');
       // Row flex items must start a new line; column flex already stacks children.
       if (!style.flexDirection.startsWith('column')) block.translation.style.flexBasis = '100%';
       block.translation.style.order =
@@ -180,12 +182,17 @@ export function restoreBlocks(blocks: Block[]) {
       block.original.replaceWith(...block.original.childNodes);
       block.original = undefined;
     }
-    for (const { property, value, priority } of block.layout ?? []) {
-      if (value) block.element.style.setProperty(property, value, priority);
-      else block.element.style.removeProperty(property);
+    if (block.layout && block.element.getAttribute('style') === block.appliedStyle) {
+      if (block.originalStyle === null) block.element.removeAttribute('style');
+      else block.element.setAttribute('style', block.originalStyle!);
+    } else {
+      for (const { property, value, priority } of block.layout ?? []) {
+        if (value) block.element.style.setProperty(property, value, priority);
+        else block.element.style.removeProperty(property);
+      }
+      if (block.layout && block.originalStyle === null && block.element.style.length === 0)
+        block.element.removeAttribute('style');
     }
-    if (block.layout && !block.hadInlineStyle && block.element.style.length === 0)
-      block.element.removeAttribute('style');
     block.layout = undefined;
     block.element.hidden = block.originalHidden;
     if (block.originalAria === null) block.element.removeAttribute('aria-hidden');

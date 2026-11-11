@@ -93,12 +93,14 @@ it('横向 flex 文本的译文单独换行，恢复时还原原来的内联样�
   document.body.innerHTML =
     '<div id="label" style="display:flex;flex-wrap:nowrap !important">Original label</div>';
   const block = collectBlocks(document.body)[0]!;
+  const originalStyle = block.element.getAttribute('style');
   showTranslation(block, '标签译文', 'bilingual');
   expect(block.element.style.flexWrap).toBe('wrap');
   expect(block.translation!.style.flexBasis).toBe('100%');
   restoreBlocks([block]);
   expect(block.element.style.flexWrap).toBe('nowrap');
   expect(block.element.style.getPropertyPriority('flex-wrap')).toBe('important');
+  expect(block.element.getAttribute('style')).toBe(originalStyle);
 });
 it('动态扫描不会把导航内的原文包装当成新段落再次翻译', () => {
   document.body.innerHTML = '<nav><span>Dashboard</span><span>Repositories</span></nav>';
