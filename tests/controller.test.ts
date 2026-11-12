@@ -1,10 +1,106 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { PageController } from '../src/content/page/controller';
 import type { Response, Segment } from '../src/core/types';
+import * as dom from '../src/content/page/dom';
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   document.body.innerHTML = '';
+});
+it('导航内联链接的文字更新后重新翻译原来的段落宿主', async () => {
+  vi.useFakeTimers();
+  document.body.innerHTML = '<nav><span><a href="#inbox">Inbox (1)</a></span></nav>';
+  vi.stubGlobal('chrome', {
+    runtime: {
+      sendMessage: (message: { type: string; segments: Segment[] }) =>
+        Promise.resolve({
+          ok: true,
+          data:
+            message.type === 'page:batch'
+              ? message.segments.map((s) => ({ ...s, text: '译文：' + s.text }))
+              : true,
+        }),
+    },
+  });
+  const controller = new PageController(() => {});
+  try {
+    controller.start();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(document.querySelector('[data-yijing-translation]')?.textContent).toBe(
+      '译文：Inbox (1)',
+    );
+    document.querySelector('a')!.textContent = 'Inbox (2)';
+    await vi.advanceTimersByTimeAsync(300);
+    expect(document.querySelector('[data-yijing-translation]')?.textContent).toBe(
+      '译文：Inbox (2)',
+    );
+    expect(controller.state).toMatchObject({ done: 1, total: 1 });
+  } finally {
+    controller.restore();
+  }
+});
+it('动态更新只扫描变化的子树，不重新读取无关段落', async () => {
+  vi.useFakeTimers();
+  document.body.innerHTML =
+    '<main>' +
+    Array.from({ length: 200 }, (_, i) => `<p>Stable paragraph ${i}</p>`).join('') +
+    '</main><section id="feed"></section>';
+  vi.stubGlobal('chrome', {
+    runtime: {
+      sendMessage: (message: { type: string; segments: Segment[] }) =>
+        Promise.resolve({
+          ok: true,
+          data:
+            message.type === 'page:batch'
+              ? message.segments.map((s) => ({ ...s, text: '译文：' + s.text }))
+              : true,
+        }),
+    },
+  });
+  const collect = vi.spyOn(dom, 'collectBlocks');
+  const read = vi.spyOn(dom, 'readBlockText');
+  const controller = new PageController(() => {});
+  try {
+    controller.start();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(controller.state.done).toBe(200);
+    collect.mockClear();
+    read.mockClear();
+    document.querySelector('#feed')!.insertAdjacentHTML('beforeend', '<p>New live paragraph</p>');
+    await vi.advanceTimersByTimeAsync(300);
+    expect(controller.state.done).toBe(201);
+    expect(collect.mock.calls.map(([root]) => root.tagName)).not.toContain('BODY');
+    expect(read.mock.calls.filter(([element]) => element.closest('main'))).toHaveLength(0);
+  } finally {
+    controller.restore();
+  }
+});
+it('持续追加内容不会无限推迟翻译', async () => {
+  vi.useFakeTimers();
+  document.body.innerHTML = '<section></section>';
+  vi.stubGlobal('chrome', {
+    runtime: {
+      sendMessage: (message: { type: string; segments: Segment[] }) =>
+        Promise.resolve({
+          ok: true,
+          data:
+            message.type === 'page:batch'
+              ? message.segments.map((s) => ({ ...s, text: '译文：' + s.text }))
+              : true,
+        }),
+    },
+  });
+  const controller = new PageController(() => {});
+  try {
+    controller.start();
+    for (let i = 0; i < 8; i++) {
+      document.querySelector('section')!.insertAdjacentHTML('beforeend', `<p>Live update ${i}</p>`);
+      await vi.advanceTimersByTimeAsync(50);
+    }
+    expect(controller.state.done).toBeGreaterThan(0);
+  } finally {
+    controller.restore();
+  }
 });
 it('55 个短段落只发 3 个请求，一轮并发内完成', async () => {
   vi.useFakeTimers();

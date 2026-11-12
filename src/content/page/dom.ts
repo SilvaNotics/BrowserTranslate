@@ -4,6 +4,7 @@ export interface Block {
   text: string;
   translation?: HTMLElement;
   original?: HTMLElement;
+  originals?: HTMLElement[];
   originalStyle?: string | null;
   appliedStyle?: string | null;
   layout?: { property: string; value: string; priority: string }[];
@@ -11,7 +12,12 @@ export interface Block {
   originalAria: string | null;
 }
 const forbidden =
-  'script,style,noscript,pre,textarea,input,select,button,svg,canvas,[contenteditable]:not([contenteditable="false"]),[data-yijing-ui],[data-yijing-translation],[translate="no"]';
+  'script,style,noscript,template,pre,textarea,input,select,button,svg,canvas,iframe,object,embed,video,audio,img,picture,[contenteditable]:not([contenteditable="false"]),[data-yijing-ui],[data-yijing-translation],[translate="no"]';
+const blockTags =
+  'p,h1,h2,h3,h4,h5,h6,li,blockquote,figcaption,td,th,dt,dd,div,section,article,main,aside,header,footer,figure';
+const candidatesSelector = blockTags + ',span';
+const sensitive =
+  'textarea,select,input[type]:not([type="text"]):not([type="search"]),[contenteditable]:not([contenteditable="false"])';
 const blankInput = 'input:not([type]),input[type="text"],input[type="search"]';
 function isVisible(element: HTMLElement) {
   if (getComputedStyle(element).visibility === 'hidden') return false;
@@ -34,12 +40,13 @@ export function readBlockText(element: HTMLElement): string {
       parts.push(node.textContent ?? '');
       return;
     }
-    if (node instanceof HTMLElement && node !== element) {
+    if (node instanceof Element && node !== element) {
+      if (!node.hasAttribute('data-yijing-original') && node.matches(blockTags)) return;
       const style = getComputedStyle(node);
       if (
         (node.matches(forbidden) && !node.matches(blankInput)) ||
         (!node.hasAttribute('data-yijing-original') &&
-          (node.hidden ||
+          (node.hasAttribute('hidden') ||
             node.getAttribute('aria-hidden') === 'true' ||
             style.display === 'none')) ||
         style.visibility === 'hidden' ||
@@ -55,7 +62,7 @@ export function readBlockText(element: HTMLElement): string {
           (parseFloat(style.borderBottomWidth) > 0 &&
             !['none', 'hidden'].includes(style.borderBottomStyle)));
       if (node.matches(blankInput) || underlinedBlank) {
-        parts.push(' 【待补全】 ');
+        parts.push(' [待补全] ');
         return;
       }
       if (node.tagName === 'BR') parts.push(' ');
@@ -65,38 +72,41 @@ export function readBlockText(element: HTMLElement): string {
   walk(element);
   return parts.join('').replace(/\s+/g, ' ').trim();
 }
+export function scanRoot(element: HTMLElement): HTMLElement {
+  return element.closest<HTMLElement>(blockTags) ?? element;
+}
 export function collectBlocks(root: HTMLElement, known = new WeakSet<HTMLElement>()): Block[] {
   const output: Block[] = [];
-  const candidates = root.querySelectorAll<HTMLElement>(
-    'p,h1,h2,h3,h4,h5,h6,li,blockquote,figcaption,td,th,dt,dd,div,section,article,span',
-  );
+  const candidates = [
+    ...(root.matches(candidatesSelector) ? [root] : []),
+    ...root.querySelectorAll<HTMLElement>(candidatesSelector),
+  ];
   for (const element of candidates) {
     if (
       known.has(element) ||
       element.closest(forbidden + ',code,kbd,samp') ||
       element.closest('[data-yijing-original]') ||
-      Array.from(element.querySelectorAll(forbidden)).some((node) => !node.matches(blankInput)) ||
+      element.querySelector(sensitive) ||
       element.hidden ||
       element.getAttribute('aria-hidden') === 'true'
     )
       continue;
-    if (
-      element.querySelector(
-        'p,h1,h2,h3,h4,h5,h6,li,blockquote,figcaption,td,th,dt,dd,div,section,article',
-      )
-    )
-      continue;
-    if (
-      element.tagName === 'SPAN' &&
-      element.parentElement?.closest('p,h1,h2,h3,h4,h5,h6,li,td,th,div,section,article')
-    )
-      continue;
+    if (element.tagName === 'SPAN' && element.parentElement?.closest(blockTags)) continue;
     const text = readBlockText(element);
-    if (text.length < 2 || !/[\p{L}\p{N}]/u.test(text)) continue;
+    if (text.length < 2 || !/[\p{L}\p{N}]/u.test(text.replaceAll('[待补全]', ''))) continue;
     if (element.querySelector('code,kbd,samp')) {
       const prose = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
         acceptNode: (node) => {
           const parent = node.parentElement;
+          // Match readBlockText's boundary: nested paragraphs are independent
+          // blocks, not evidence that this container's code is natural prose.
+          for (
+            let current = parent;
+            current && current !== element;
+            current = current.parentElement
+          )
+            if (current.matches(blockTags) && !current.hasAttribute('data-yijing-original'))
+              return NodeFilter.FILTER_REJECT;
           return parent &&
             /[\p{L}\p{N}]/u.test(node.textContent ?? '') &&
             !parent.closest(forbidden + ',code,kbd,samp') &&
@@ -159,24 +169,58 @@ export function showTranslation(block: Block, text: string, mode: 'bilingual' | 
       block.translation.style.gridRowStart = String(rows + 1);
       block.translation.style.order = '2147483647';
     }
-    block.element.append(block.translation);
+    // Keep the translation beside this container's prose, before a trailing image
+    // or nested paragraph. Nested blocks have their own translation jobs.
+    const source = Array.from(block.element.childNodes).findLast((node) =>
+      node.nodeType === Node.TEXT_NODE
+        ? Boolean(node.textContent?.trim())
+        : node instanceof HTMLElement &&
+          !node.matches(blockTags + ',' + forbidden) &&
+          Boolean(node.textContent?.trim()),
+    );
+    block.element.insertBefore(block.translation, source?.nextSibling ?? null);
   }
   block.translation.textContent = text;
   if (mode === 'translation') {
-    if (!block.original) {
-      block.original = document.createElement('span');
-      block.original.dataset.yijingOriginal = block.id;
-      block.original.hidden = true;
-      block.original.style.setProperty('display', 'none', 'important');
-      block.original.setAttribute('aria-hidden', 'true');
-      block.original.append(
-        ...Array.from(block.element.childNodes).filter((node) => node !== block.translation),
-      );
-      block.element.prepend(block.original);
+    if (!block.originals) {
+      block.originals = [];
+      const preserve = blockTags + ',' + forbidden;
+      const isPreserved = (node: Element) => node.matches(preserve) && !node.matches(blankInput);
+      const hideProse = (parent: HTMLElement) => {
+        let wrapper: HTMLElement | undefined;
+        for (const node of Array.from(parent.childNodes)) {
+          if (node instanceof Element && isPreserved(node)) {
+            wrapper = undefined;
+            continue;
+          }
+          if (
+            node instanceof HTMLElement &&
+            Array.from(node.querySelectorAll(preserve)).some(isPreserved)
+          ) {
+            wrapper = undefined;
+            hideProse(node);
+            continue;
+          }
+          if (!wrapper) {
+            wrapper = document.createElement('span');
+            wrapper.dataset.yijingOriginal = block.id;
+            wrapper.hidden = true;
+            wrapper.style.setProperty('display', 'none', 'important');
+            wrapper.setAttribute('aria-hidden', 'true');
+            parent.insertBefore(wrapper, node);
+            block.originals!.push(wrapper);
+          }
+          wrapper.append(node);
+        }
+      };
+      hideProse(block.element);
+      block.original = block.originals[0];
     }
     const links = document.createElement('span');
     Object.assign(links.style, { display: 'block', fontSize: '0.85em', marginTop: '0.35em' });
-    for (const original of block.original!.querySelectorAll<HTMLAnchorElement>('a[href]')) {
+    for (const original of (block.originals ?? []).flatMap((wrapper) =>
+      Array.from(wrapper.querySelectorAll<HTMLAnchorElement>('a[href]')),
+    )) {
       let url: URL;
       try {
         url = new URL(original.href, document.baseURI);
@@ -196,8 +240,9 @@ export function showTranslation(block: Block, text: string, mode: 'bilingual' | 
       links.append(link);
     }
     if (links.childElementCount) block.translation.append(links);
-  } else if (block.original) {
-    block.original.replaceWith(...block.original.childNodes);
+  } else if (block.originals) {
+    for (const original of block.originals) original.replaceWith(...original.childNodes);
+    block.originals = undefined;
     block.original = undefined;
   }
 }
@@ -205,8 +250,9 @@ export function restoreBlocks(blocks: Block[]) {
   for (const block of blocks) {
     block.translation?.remove();
     block.translation = undefined;
-    if (block.original) {
-      block.original.replaceWith(...block.original.childNodes);
+    if (block.originals) {
+      for (const original of block.originals) original.replaceWith(...original.childNodes);
+      block.originals = undefined;
       block.original = undefined;
     }
     if (block.layout && block.element.getAttribute('style') === block.appliedStyle) {

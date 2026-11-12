@@ -6,6 +6,56 @@ import {
   restoreBlocks,
 } from '../src/content/page/dom';
 import { bindSelectionShortcut } from '../src/content/shortcuts';
+it('段落外独立输入框不会让父容器生成只有待补全标记的译文', () => {
+  document.body.innerHTML =
+    '<article><h1>Article title</h1><p>Actual paragraph.</p><input value="private"><canvas></canvas></article>';
+  expect(collectBlocks(document.body).map((block) => block.text)).toEqual([
+    'Article title',
+    'Actual paragraph.',
+  ]);
+});
+it('文字后的图片、SVG 和嵌套媒体容器不会导致漏翻，媒体文字不发送给模型', () => {
+  document.body.innerHTML =
+    '<div id="mixed">Read <strong>this guide</strong> first.<div><img alt="private image description"><svg><text>Private chart</text></svg></div><p>Next paragraph.</p></div>' +
+    '<p>Download <svg><title>Private icon label</title></svg> the guide.<button>Action</button></p>';
+  const original = document.body.innerHTML;
+  const image = document.querySelector('img');
+  const blocks = collectBlocks(document.body);
+  expect(blocks.map((block) => block.text)).toEqual([
+    'Read this guide first.',
+    'Next paragraph.',
+    'Download the guide.',
+  ]);
+  const block = blocks[0]!;
+  showTranslation(block, '请先阅读指南。', 'translation');
+  expect(image?.closest('[data-yijing-original]')).toBeNull();
+  expect(document.querySelector('p')?.closest('[data-yijing-original]')).toBeNull();
+  expect(block.translation?.nextElementSibling?.querySelector('img')).toBe(image);
+  expect(readBlockText(block.element)).toBe(block.text);
+  restoreBlocks(blocks);
+  expect(document.body.innerHTML).toBe(original);
+  expect(document.querySelector('img')).toBe(image);
+});
+it('仅译文保留句子中的内联图片和按钮，恢复后节点和事件仍有效', () => {
+  document.body.innerHTML =
+    '<p>Read <span>the <img alt="icon">guide</span> now.<button>Open</button></p>';
+  const original = document.body.innerHTML;
+  const image = document.querySelector('img')!;
+  const button = document.querySelector('button')!;
+  const clicked = vi.fn();
+  button.addEventListener('click', clicked);
+  const block = collectBlocks(document.body)[0]!;
+  expect(block.text).toBe('Read the guide now.');
+  showTranslation(block, '现在阅读指南。', 'translation');
+  expect(image.closest('[data-yijing-original]')).toBeNull();
+  expect(button.closest('[data-yijing-original]')).toBeNull();
+  button.click();
+  expect(clicked).toHaveBeenCalledOnce();
+  showTranslation(block, '现在阅读指南。', 'bilingual');
+  restoreBlocks([block]);
+  expect(document.body.innerHTML).toBe(original);
+  expect(document.querySelector('img')).toBe(image);
+});
 it('独立代码即使包装在普通容器中也不翻译，含内联代码的自然语言仍翻译', () => {
   document.body.innerHTML =
     '<div><code>int main() { return 0; }</code></div>' +
@@ -13,12 +63,19 @@ it('独立代码即使包装在普通容器中也不翻译，含内联代码的�
     '<p>Call <code>bind()</code> first.</p>';
   expect(collectBlocks(document.body).map((block) => block.text)).toEqual(['Call bind() first.']);
 });
+it('嵌套段落的正文不能把父容器中的独立代码误判为自然语言', () => {
+  document.body.innerHTML =
+    '<div><code>const privateProgram = true;</code><p>Read the documentation.</p></div>';
+  expect(collectBlocks(document.body).map((block) => block.text)).toEqual([
+    'Read the documentation.',
+  ]);
+});
 it('带下划线样式的空白占位保留为待补全标记，普通空白不误判', () => {
   document.body.innerHTML =
     '<p>Nine-year <span style="display:inline-block;border-bottom:1px solid;width:100px">&nbsp;</span> education.</p>' +
     '<p>Ordinary <span> </span> spacing.</p>';
   expect(collectBlocks(document.body).map((block) => block.text)).toEqual([
-    'Nine-year 【待补全】 education.',
+    'Nine-year [待补全] education.',
     'Ordinary spacing.',
   ]);
 });
@@ -30,11 +87,12 @@ it('填空题中的文本输入框作为空缺参与整句翻译，不读取答�
   const original = document.body.innerHTML;
   const blocks = collectBlocks(document.body);
   expect(blocks.map((block) => block.text)).toEqual([
-    'Thanks to its nine-year 【待补全】 education.',
+    'Thanks to its nine-year [待补全] education.',
     'He has been ______ leaving the studio.',
   ]);
-  showTranslation(blocks[0]!, '得益于九年【义务】教育。', 'translation');
-  expect(readBlockText(blocks[0]!.element)).toBe('Thanks to its nine-year 【待补全】 education.');
+  showTranslation(blocks[0]!, '得益于九年[义务]教育。', 'translation');
+  expect(input?.closest('[data-yijing-original]')).not.toBeNull();
+  expect(readBlockText(blocks[0]!.element)).toBe('Thanks to its nine-year [待补全] education.');
   restoreBlocks(blocks);
   expect(document.body.innerHTML).toBe(original);
   expect(document.querySelector('input')).toBe(input);

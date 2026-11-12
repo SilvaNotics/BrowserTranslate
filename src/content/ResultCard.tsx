@@ -37,10 +37,11 @@ export function ResultCard({
   const detailTask = useRef<string | undefined>(undefined);
   useEffect(() => {
     const listener = (e: KeyboardEvent) => {
+      if (!e.isTrusted) return;
       if (e.key === 'Escape' && !pinned) onClose();
     };
-    document.addEventListener('keydown', listener);
-    return () => document.removeEventListener('keydown', listener);
+    document.addEventListener('keydown', listener, true);
+    return () => document.removeEventListener('keydown', listener, true);
   }, [pinned, onClose]);
   useEffect(
     () => () => {

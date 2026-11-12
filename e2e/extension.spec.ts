@@ -44,11 +44,21 @@ test.beforeAll(async () => {
         .label{display:flex;align-items:center;gap:8px}
         .label > span{font-weight:700}
         p{margin:0} .card{border:1px solid #ddd;border-radius:12px;padding:20px}
-      </style></head><body><nav><span id="nav-text">Dashboard</span><span>Repositories</span></nav>
+      </style></head><body><nav><span id="nav-text"><a href="#dashboard">Dashboard</a></span><span>Repositories</span></nav>
       <main><aside><div class="label" id="flex-text"><i class="icon"></i><span id="source-label">Personal account</span></div><div id="reverse-text" style="display:flex;flex-direction:column-reverse"><span>Reverse layout label</span></div></aside>
       <article><div class="row" id="row"><p id="row-text">No pull requests found, try a different filter.</p><i class="icon" id="row-icon"></i></div>
       <div class="grid" id="grid"><p class="card" id="grid-text">Latest from our changelog</p><p class="card">Learn with GitHub</p></div>
       <table><tr><td id="cell-text">Repository activity</td><td>Updated today</td></tr></table></article></main></body></html>`);
+      return;
+    }
+    if (req.url === '/mixed-media') {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.end(`<!doctype html><html><head><style>body{font:18px/1.7 Arial;margin:40px}img{width:120px;height:70px}svg{width:18px;height:18px}</style></head><body><article>
+        <div id="mixed-intro">Read <strong>this illustrated guide</strong> before starting.<div id="picture"><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='70'%3E%3Crect width='120' height='70' fill='teal'/%3E%3C/svg%3E" alt="Private image description"></div><p id="mixed-next">Continue with the next paragraph.</p></div>
+        <p id="mixed-icon">Download <svg><title>Private icon description</title><circle cx="8" cy="8" r="7"/></svg> the illustrated guide.<button id="media-action">Open guide</button></p>
+        <p id="mixed-inline">Read <span>the <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" alt="private inline description">guide</span> now.</p>
+        <div id="standalone-code"><code>const privateProgram = true;</code><p id="code-documentation">Read the documentation.</p></div>
+      </article></body></html>`);
       return;
     }
     if (req.url === '/technical') {
@@ -142,7 +152,7 @@ test.beforeAll(async () => {
             id: s.id,
             text:
               s.text.includes('nine-year') && system.includes('补全')
-                ? '得益于九年【义务】教育，中国的识字率很高。'
+                ? '得益于九年[义务]教育，中国的识字率很高。'
                 : '译文：' + s.text,
           })),
         );
@@ -510,7 +520,11 @@ test('分块并发遵守设置，优先显示首屏，恢复重翻不重复请�
       ),
     ).toBe(true);
     expect(segments.flat().every((s) => s.id.length <= 2)).toBe(true);
-    expect(segments[0]![0]!.text).toContain('Speed paragraph 0.');
+    // Concurrent fetches can reach the server out of dispatch order. The first
+    // two requests must include the viewport batch, before any later work.
+    expect(
+      segments.slice(0, 2).some((batch) => batch[0]?.text.includes('Speed paragraph 0.')),
+    ).toBe(true);
     await writeFile(
       'artifacts/page-speed.json',
       JSON.stringify(
@@ -631,7 +645,7 @@ test('填空题按整句翻译并保留补全标记，恢复原文保留输入�
   await page.getByRole('button', { name: '整页翻译', exact: true }).click();
   await expect(page.locator('[data-yijing-translation]')).toHaveCount(3);
   await expect(page.locator('[data-yijing-translation]')).toHaveText(
-    Array(3).fill('得益于九年【义务】教育，中国的识字率很高。'),
+    Array(3).fill('得益于九年[义务]教育，中国的识字率很高。'),
   );
   expect(JSON.stringify(requests.slice(before))).not.toContain('private answer');
   await page.getByRole('button', { name: '仅译文', exact: true }).click();
@@ -644,6 +658,41 @@ test('填空题按整句翻译并保留补全标记，恢复原文保留输入�
   await page.getByRole('button', { name: '恢复原文', exact: true }).click();
   expect(await page.locator('article').innerHTML()).toBe(original);
   await expect(page.locator('#exercise-input input')).toHaveValue('private answer');
+  await page.close();
+});
+
+test('混合图片和图标的正文可翻译，仅译文保留媒体及原按钮，恢复布局', async () => {
+  const page = await context.newPage();
+  await page.goto(base + '/mixed-media');
+  const original = await page.locator('article').innerHTML();
+  const before = requests.length;
+  await page.getByRole('button', { name: '整页翻译', exact: true }).click();
+  for (const selector of ['#mixed-intro', '#mixed-next', '#mixed-icon', '#mixed-inline']) {
+    await expect(page.locator(selector + ' > [data-yijing-translation]')).toBeVisible();
+  }
+  const sent = requests
+    .slice(before)
+    .map((request) => JSON.stringify(request.body))
+    .join('');
+  expect(sent).toContain('Read this illustrated guide before starting.');
+  expect(sent).not.toContain('Private image description');
+  expect(sent).not.toContain('Private icon description');
+  expect(sent).not.toContain('privateProgram');
+  await expect(page.locator('#standalone-code > [data-yijing-translation]')).toHaveCount(0);
+  await expect(page.locator('#code-documentation > [data-yijing-translation]')).toBeVisible();
+  await page.getByRole('button', { name: '仅译文', exact: true }).click();
+  await expect(page.locator('#picture img')).toBeVisible();
+  await expect(page.locator('#mixed-inline img')).toBeVisible();
+  await expect(page.locator('#media-action')).toBeVisible();
+  await expect(page.locator('#mixed-next > [data-yijing-translation]')).toBeVisible();
+  const positions = await page.locator('#mixed-intro').evaluate((el) => ({
+    translation: el.querySelector('[data-yijing-translation]')!.getBoundingClientRect().bottom,
+    image: el.querySelector('img')!.getBoundingClientRect().top,
+  }));
+  expect(positions.translation).toBeLessThanOrEqual(positions.image + 1);
+  await page.screenshot({ path: 'artifacts/mixed-media.png', fullPage: true });
+  await page.getByRole('button', { name: '恢复原文', exact: true }).click();
+  expect(await page.locator('article').innerHTML()).toBe(original);
   await page.close();
 });
 
@@ -684,6 +733,12 @@ test('双语始终排在原文下方，保留 flex、grid 和表格布局', asyn
   }
   expect(await page.locator('#row > *').count()).toBe(2);
   expect(await page.locator('#grid > *').count()).toBe(2);
+  await page.locator('#nav-text > a').evaluate((link) => {
+    link.textContent = 'Dashboard (2)';
+  });
+  await expect(page.locator('#nav-text > [data-yijing-translation]')).toHaveText(
+    '译文：Dashboard (2)',
+  );
   await expect(page.locator('#flex-text > #source-label')).toHaveCSS('font-weight', '700');
   const translatedIcon = await page.locator('#row-icon').boundingBox();
   expect(translatedIcon!.x).toBeCloseTo(rowIcon!.x, 0);

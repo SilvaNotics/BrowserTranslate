@@ -14,6 +14,39 @@ function settings() {
   };
 }
 
+it.each(['简体中文', 'English'])(
+  '整页请求对 %s 使用目标语言的 ASCII 补全标记规则',
+  async (language) => {
+    let systemPrompt = '';
+    let input: unknown;
+    vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      systemPrompt = body.messages[0].content;
+      input = JSON.parse(body.messages[1].content);
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: '[{"id":"0","text":"fixture"}]' } }] }),
+      );
+    });
+    const segment = { id: 'original-id', text: 'value_name = ___' };
+    await translatePageBatch(
+      { ...settings(), targetLanguage: language },
+      [segment],
+      new AbortController().signal,
+    );
+    expect(input).toEqual([{ id: '0', text: segment.text }]);
+    expect(systemPrompt).toContain('翻译为' + language);
+    expect(systemPrompt).toContain('ASCII 方括号 []');
+    expect(systemPrompt).toContain(
+      '方括号内的所有文字（包括无法可靠推断时的占位提示）必须使用目标语言',
+    );
+    expect(systemPrompt).toContain('用目标语言表达“待补全”并放入 []');
+    expect(systemPrompt).toContain('空缺标记 [待补全] 或【待补全】');
+    expect(systemPrompt).not.toContain('用【】');
+    expect(systemPrompt).not.toContain('保留【待补全】');
+    expect(systemPrompt).toContain('只返回JSON数组，保留每项id，将text替换为译文，不增删项目');
+  },
+);
+
 it('请求使用短 ID 减少模型输出，乱序返回仍映射到原段落', async () => {
   vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
     const body = JSON.parse(String(init.body));

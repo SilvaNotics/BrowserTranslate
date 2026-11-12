@@ -1,6 +1,13 @@
 import { rpc, taskId } from '../../core/rpc';
 import { PAGE_LIMITS, validPageConcurrency } from '../../core/page';
-import { collectBlocks, readBlockText, restoreBlocks, showTranslation, type Block } from './dom';
+import {
+  collectBlocks,
+  readBlockText,
+  restoreBlocks,
+  scanRoot,
+  showTranslation,
+  type Block,
+} from './dom';
 import { splitText, takeBatch, type PageChunk } from './batches';
 import type { Segment } from '../../core/types';
 
@@ -48,6 +55,7 @@ export class PageController {
   private generation = 0;
   private observer?: MutationObserver;
   private timer?: ReturnType<typeof setTimeout>;
+  private dirtyRoots = new Set<HTMLElement>();
   private inFlight = new Map<string, Job[]>();
 
   constructor(private notify: (state: PageState) => void) {}
@@ -78,15 +86,51 @@ export class PageController {
     this.state = { ...this.state, active: true, running: true, error: '', mode };
     this.scan();
     if (!this.observer) {
-      this.observer = new MutationObserver((records) => {
-        if (records.every((r) => this.ownMutation(r))) return;
-        clearTimeout(this.timer);
-        this.timer = setTimeout(() => {
-          if (this.state.running) this.scan();
-        }, 150);
+      this.observer = new MutationObserver((records) => this.queueChanges(records));
+      this.observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+        characterData: true,
       });
-      this.observer.observe(document.body, { childList: true, subtree: true, characterData: true });
     }
+  }
+
+  private queueChanges(records: MutationRecord[]) {
+    for (const record of records) {
+      if (this.ownMutation(record)) continue;
+      const target =
+        record.target instanceof HTMLElement ? record.target : record.target.parentElement;
+      if (!target) continue;
+      if (target === document.documentElement) this.dirtyRoots.add(document.body);
+      else if (
+        target === document.body &&
+        record.type === 'childList' &&
+        [...record.addedNodes, ...record.removedNodes].every((node) => node instanceof Element)
+      ) {
+        for (const node of record.addedNodes)
+          if (node instanceof HTMLElement) this.dirtyRoots.add(node);
+        // Removed blocks are pruned by refreshBlocks even without a connected scan root.
+      } else this.dirtyRoots.add(scanRoot(target));
+    }
+    if (!records.some((record) => !this.ownMutation(record)) || this.timer !== undefined) return;
+    // A bounded delay (not a resettable debounce) also progresses on live feeds.
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      const roots = [...this.dirtyRoots].filter((root) => root.isConnected);
+      this.dirtyRoots.clear();
+      if (this.state.running)
+        this.scan(
+          roots.filter((root) => !roots.some((other) => other !== root && other.contains(root))),
+        );
+    }, 150);
+  }
+
+  private write(action: () => void) {
+    // Preserve page changes already queued, then discard only our synchronous writes.
+    const records = this.observer?.takeRecords();
+    if (records?.length) this.queueChanges(records);
+    action();
+    this.observer?.takeRecords();
   }
 
   private ownMutation(record: MutationRecord) {
@@ -96,12 +140,15 @@ export class PageController {
     const changed = [...record.addedNodes, ...record.removedNodes];
     return (
       changed.length > 0 &&
-      changed.every((node) => node instanceof Element && node.matches('[data-yijing-translation]'))
+      changed.every(
+        (node) =>
+          node instanceof Element && node.matches('[data-yijing-ui],[data-yijing-translation]'),
+      )
     );
   }
 
-  private scan() {
-    this.refreshBlocks();
+  private scan(roots = [document.body]) {
+    this.refreshBlocks(roots);
     this.pump();
   }
 
@@ -109,10 +156,19 @@ export class PageController {
     if (!job.blocks.size && this.jobs.get(job.text) === job) this.jobs.delete(job.text);
   }
 
-  private refreshBlocks() {
+  private refreshBlocks(roots = [document.body]) {
+    const recollect = new Set(roots);
     for (const block of this.blocks) {
-      if (block.element.isConnected && readBlockText(block.element) === block.text) continue;
-      restoreBlocks([block]);
+      if (
+        block.element.isConnected &&
+        (!roots.some((root) => root.contains(block.element) || block.element.contains(root)) ||
+          readBlockText(block.element) === block.text)
+      )
+        continue;
+      // A mutation may be inside an inline child of the owning block (for
+      // example a link inside a navigation span). Recollect the owner too.
+      if (block.element.isConnected) recollect.add(block.element);
+      this.write(() => restoreBlocks([block]));
       this.known.delete(block.element);
       this.translated.delete(block.id);
       this.skipped.delete(block);
@@ -125,14 +181,18 @@ export class PageController {
       this.blocks.delete(block);
     }
     // Read layout once per new block, before inserting any translations.
-    const added = collectBlocks(document.body, this.known).map((block) => {
-      const rect = block.element.getBoundingClientRect();
-      return {
-        block,
-        visible: rect.bottom >= 0 && rect.top < innerHeight,
-        distance: Math.abs(rect.top),
-      };
-    });
+    const scanRoots = [...recollect].filter((root) => root.isConnected);
+    const added = scanRoots
+      .filter((root) => !scanRoots.some((other) => other !== root && other.contains(root)))
+      .flatMap((root) => collectBlocks(root, this.known))
+      .map((block) => {
+        const rect = block.element.getBoundingClientRect();
+        return {
+          block,
+          visible: rect.bottom >= 0 && rect.top < innerHeight,
+          distance: Math.abs(rect.top),
+        };
+      });
     added.sort((a, b) => Number(b.visible) - Number(a.visible) || a.distance - b.distance);
     for (const { block, visible } of added) {
       this.blocks.add(block);
@@ -176,7 +236,7 @@ export class PageController {
     const text = jobs.map((job) => job.translation).join('\n');
     this.translated.set(block.id, text);
     this.failed.delete(block);
-    showTranslation(block, text, this.state.mode);
+    this.write(() => showTranslation(block, text, this.state.mode));
   }
 
   private pump() {
@@ -195,7 +255,9 @@ export class PageController {
       ) {
         // MutationObserver is debounced; recheck before sending queued page text.
         this.queue.unshift(...batch);
-        this.refreshBlocks();
+        this.refreshBlocks([
+          ...new Set(batch.flatMap((job) => [...job.blocks].map((block) => block.element))),
+        ]);
         this.queue = this.queue.filter((job) => job.blocks.size > 0);
         continue;
       }
@@ -261,7 +323,7 @@ export class PageController {
     this.state.mode = mode;
     for (const block of this.blocks) {
       const text = this.translated.get(block.id);
-      if (text) showTranslation(block, text, mode);
+      if (text) this.write(() => showTranslation(block, text, mode));
     }
     this.emit();
   }
@@ -272,6 +334,8 @@ export class PageController {
     this.observer?.disconnect();
     this.observer = undefined;
     clearTimeout(this.timer);
+    this.timer = undefined;
+    this.dirtyRoots.clear();
     for (const batch of this.inFlight.values()) {
       for (const job of batch) job.status = 'queued';
       this.queue.unshift(...batch);

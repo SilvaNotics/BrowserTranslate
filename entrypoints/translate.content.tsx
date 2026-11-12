@@ -1,6 +1,7 @@
 import ReactDOM from 'react-dom/client';
 import { ContentApp } from '../src/content/App';
 import { isSupportedUrl } from '../src/core/rpc';
+import { isolatedUiEvents, prepareContentHost } from '../src/content/host';
 import '../src/content/content.css';
 export default defineContentScript({
   matches: ['http://*/*', 'https://*/*'],
@@ -11,41 +12,26 @@ export default defineContentScript({
     const ui = await createShadowRootUi(ctx, {
       name: 'yijing-translate',
       position: 'overlay',
+      anchor: 'html',
+      inheritStyles: true,
+      isolateEvents: isolatedUiEvents,
       zIndex: 2147483647,
       onMount(container, _shadow, host) {
-        host.dataset.yijingUi = 'true';
+        const disposeHost = prepareContentHost(host, container);
         const app = document.createElement('div');
-        for (const type of [
-          'click',
-          'pointerdown',
-          'pointermove',
-          'pointerup',
-          'keydown',
-          'keyup',
-          'submit',
-        ]) {
-          app.addEventListener(
-            type,
-            (event) => {
-              if (!event.isTrusted) {
-                event.preventDefault();
-                event.stopImmediatePropagation();
-              }
-            },
-            true,
-          );
-        }
         container.append(app);
         const root = ReactDOM.createRoot(app);
         const render = () => root.render(<ContentApp key={location.href} host={host} />);
         render();
-        ctx.addEventListener(window, 'wxt:locationchange', render);
-        return root;
+        return { root, render, disposeHost };
       },
-      onRemove(root) {
-        root?.unmount();
+      onRemove(mounted) {
+        mounted?.disposeHost();
+        mounted?.root.unmount();
       },
     });
+    if (ctx.isInvalid) return;
+    ctx.addEventListener(window, 'wxt:locationchange', () => ui.mounted?.render());
     ui.mount();
   },
 });
