@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="zh-CN">
+  <meta charset="utf-8" />
+  <title>发现与阅读 · 翻译呈现回归</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    :root {
+      color-scheme: light dark;
+      --bg: #f6f7f9;
+      --card: #fff;
+      --ink: #20252c;
+      --muted: #66717e;
+      --line: #e4e7ec;
+      --accent: #166882;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #14191f;
+        --card: #1f2730;
+        --ink: #e6edf3;
+        --muted: #a8b4bf;
+        --line: #39434e;
+        --accent: #84d2e9;
+      }
+    }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font:
+        15px/1.6 Arial,
+        'Noto Sans CJK SC',
+        sans-serif;
+    }
+    header {
+      background: var(--card);
+      border-bottom: 1px solid var(--line);
+      padding: 24px 5vw;
+    }
+    nav {
+      display: flex;
+      align-items: flex-start;
+      gap: 28px;
+      flex-wrap: wrap;
+    }
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+    a:hover {
+      color: var(--accent);
+    }
+    main {
+      max-width: 1120px;
+      margin: 32px auto;
+      padding: 0 24px;
+    }
+    h1 {
+      font-size: 30px;
+      margin: 0 0 8px;
+    }
+    h2 {
+      font-size: 20px;
+      margin: 28px 0 16px;
+    }
+    .intro {
+      color: var(--muted);
+      margin: 0 0 24px;
+    }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 22px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .cover {
+      height: 126px;
+      display: grid;
+      place-items: center;
+      background: #cfdee6;
+      font-size: 32px;
+      color: #294f63;
+    }
+    .card:nth-child(2) .cover {
+      background: #e2dace;
+    }
+    .card:nth-child(3) .cover {
+      background: #d4dfd6;
+    }
+    .card-body {
+      padding: 16px;
+    }
+    h3 {
+      font-size: 16px;
+      line-height: 24px;
+      margin: 0 0 8px;
+      height: 48px;
+      max-height: 48px;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+    }
+    .meta {
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .news {
+      display: block;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      overflow: hidden;
+      height: 24px;
+    }
+    .reading {
+      max-width: 760px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 28px;
+      margin: 28px 0;
+    }
+    p {
+      line-height: 1.8;
+    }
+    .reading a {
+      color: var(--accent);
+      text-decoration: underline;
+    }
+    @media (max-width: 620px) {
+      .cards {
+        grid-template-columns: 1fr;
+      }
+      main {
+        padding: 0 16px;
+      }
+      .reading {
+        padding: 20px;
+      }
+      nav {
+        gap: 16px;
+      }
+      header {
+        padding: 20px 16px;
+      }
+    }
+  </style>
+  <header>
+    <nav id="navigation">
+      <a href="#home">首页</a><a href="#live"><span>直播</span></a
+      ><a href="#popular">热门视频</a><a href="#learn" lang="en">Learning resources</a>
+    </nav>
+  </header>
+  <main>
+    <h1>发现值得一看的内容</h1>
+    <p class="intro">中文内容保留原样，外语内容按需翻译。</p>
+    <section class="cards">
+      <article class="card">
+        <div class="cover" aria-hidden="true">01</div>
+        <div class="card-body">
+          <h3 id="chinese-title"><a href="#chinese">这是一段本来就是中文的视频标题</a></h3>
+          <div class="meta">知识分享 · 2026</div>
+        </div>
+      </article>
+      <article class="card" lang="en">
+        <div class="cover" aria-hidden="true">02</div>
+        <div class="card-body">
+          <h3 id="english-title">
+            <a href="#english"
+              >A practical guide to reading across languages and discovering a wider world</a
+            >
+          </h3>
+          <div class="meta">Independent creator</div>
+        </div>
+      </article>
+      <article class="card" lang="ja">
+        <div class="cover" aria-hidden="true">03</div>
+        <div class="card-body">
+          <h3 id="japanese-title">
+            <a href="#japanese">日本語の動画から新しい世界を見つけよう</a>
+          </h3>
+          <div class="meta">学習チャンネル</div>
+        </div>
+      </article>
+    </section>
+    <h2>最新动态</h2>
+    <a class="news" id="news-link" lang="en" href="#news"
+      >Read the complete announcement about new tools for language learners and curious readers.</a
+    >
+    <article class="reading" lang="en">
+      <h2>Reading without borders</h2>
+      <p id="article-copy">
+        Every page opens a different window. A good translation keeps the original structure
+        readable, respects the links you follow, and gives the words enough space to breathe.
+      </p>
+      <p id="inline-link">
+        Start with <a href="#guide">the reading guide</a> and continue at your own pace.
+      </p>
+    </article>
+  </main>
+</html>

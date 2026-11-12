@@ -3,6 +3,7 @@ import { PAGE_LIMITS, validPageConcurrency } from '../../core/page';
 import {
   collectBlocks,
   readBlockText,
+  readBlockLanguage,
   restoreBlocks,
   scanRoot,
   showTranslation,
@@ -23,6 +24,8 @@ export interface PageState {
 }
 
 interface Job extends PageChunk {
+  key: string;
+  language?: string;
   blocks: Set<Block>;
   status: 'queued' | 'pending' | 'done' | 'failed';
   translation?: string;
@@ -91,6 +94,8 @@ export class PageController {
         childList: true,
         subtree: true,
         characterData: true,
+        attributes: true,
+        attributeFilter: ['lang'],
       });
     }
   }
@@ -153,7 +158,7 @@ export class PageController {
   }
 
   private forgetOrphan(job: Job) {
-    if (!job.blocks.size && this.jobs.get(job.text) === job) this.jobs.delete(job.text);
+    if (!job.blocks.size && this.jobs.get(job.key) === job) this.jobs.delete(job.key);
   }
 
   private refreshBlocks(roots = [document.body]) {
@@ -162,7 +167,8 @@ export class PageController {
       if (
         block.element.isConnected &&
         (!roots.some((root) => root.contains(block.element) || block.element.contains(root)) ||
-          readBlockText(block.element) === block.text)
+          (readBlockText(block.element) === block.text &&
+            readBlockLanguage(block.element, block.text) === block.language))
       )
         continue;
       // A mutation may be inside an inline child of the owning block (for
@@ -196,12 +202,16 @@ export class PageController {
     added.sort((a, b) => Number(b.visible) - Number(a.visible) || a.distance - b.distance);
     for (const { block, visible } of added) {
       this.blocks.add(block);
+      const language = block.language;
       const jobs = splitText(block.text).map((text) => {
-        let job = this.jobs.get(text);
+        const key = JSON.stringify([language ?? '', text]);
+        let job = this.jobs.get(key);
         if (!job) {
-          const cached = this.cache.get(text);
+          const cached = this.cache.get(key);
           job = {
             id: taskId(),
+            key,
+            language,
             text,
             visible,
             blocks: new Set(),
@@ -209,7 +219,7 @@ export class PageController {
             translation: cached?.text,
             skipped: cached?.skipped ?? false,
           };
-          this.jobs.set(text, job);
+          this.jobs.set(key, job);
           if (!cached) this.queue.push(job);
         }
         job.visible ||= visible;
@@ -227,7 +237,11 @@ export class PageController {
     const jobs = this.blockJobs.get(block)!;
     if (jobs.some((job) => job.status === 'failed')) this.failed.add(block);
     if (jobs.some((job) => job.translation === undefined)) return;
-    if (readBlockText(block.element) !== block.text) return;
+    if (
+      readBlockText(block.element) !== block.text ||
+      readBlockLanguage(block.element, block.text) !== block.language
+    )
+      return;
     if (jobs.every((job) => job.skipped)) {
       this.skipped.add(block);
       this.failed.delete(block);
@@ -249,7 +263,10 @@ export class PageController {
       if (
         batch.some((job) =>
           [...job.blocks].some(
-            (block) => !block.element.isConnected || readBlockText(block.element) !== block.text,
+            (block) =>
+              !block.element.isConnected ||
+              readBlockText(block.element) !== block.text ||
+              readBlockLanguage(block.element, block.text) !== block.language,
           ),
         )
       ) {
@@ -275,7 +292,11 @@ export class PageController {
       const results = await rpc<Segment[]>({
         type: 'page:batch',
         id,
-        segments: batch.map(({ id, text }) => ({ id, text })),
+        segments: batch.map(({ id, text, language }) => ({
+          id,
+          text,
+          ...(language ? { language } : {}),
+        })),
       });
       if (generation !== this.generation || !this.state.active) return;
       const byId = new Map(results.map((result) => [result.id, result]));
@@ -286,7 +307,7 @@ export class PageController {
         job.translation = translation;
         job.skipped = result!.skipped === true;
         job.status = 'done';
-        this.cache.set(job.text, { text: translation, skipped: job.skipped });
+        this.cache.set(job.key, { text: translation, skipped: job.skipped });
         if (this.cache.size > PAGE_LIMITS.cacheEntries)
           this.cache.delete(this.cache.keys().next().value!);
         for (const block of job.blocks) this.apply(block);

@@ -3,6 +3,47 @@ import { isMostlyTargetLanguage } from '../src/core/language';
 
 afterEach(() => vi.unstubAllGlobals());
 
+it('明确的同语言标签也支持短英语、法语和纯汉字日文，跨语言不靠字母表猜测', async () => {
+  expect(await isMostlyTargetLanguage('Dashboard', 'English', 'en-US')).toBe(true);
+  expect(await isMostlyTargetLanguage('Bonjour', 'Français', 'fr')).toBe(true);
+  expect(await isMostlyTargetLanguage('台本', '日本語', 'ja')).toBe(true);
+  expect(await isMostlyTargetLanguage('Bonjour', 'English', 'fr')).toBe(false);
+  expect(await isMostlyTargetLanguage('Settings', '简体中文', 'en')).toBe(false);
+});
+
+it('中文页面的短链接和导航不依赖短文本检测器，外语与简繁转换仍保留', async () => {
+  for (const text of ['首页', '动态', '直播', '热门视频', '这是一个中文视频标题']) {
+    expect(await isMostlyTargetLanguage(text, '简体中文', 'zh-CN'), text).toBe(true);
+  }
+  expect(await isMostlyTargetLanguage('直播', '繁體中文', 'zh-Hant')).toBe(true);
+  for (const [text, language] of [
+    ['本日休業', 'ja'],
+    ['台本', 'ja'],
+    ['国民休暇', 'ja'],
+    ['これは日本語です', 'zh-CN'],
+    ['這個網頁', 'zh-CN'],
+    ['Watch this video', 'zh-CN'],
+    ['中文 English explanation', 'zh-CN'],
+  ]) {
+    expect(await isMostlyTargetLanguage(text!, '简体中文', language!), text).toBe(false);
+  }
+  expect(await isMostlyTargetLanguage('这个网页', '繁體中文', 'zh-CN')).toBe(false);
+  expect(
+    await isMostlyTargetLanguage(
+      'Claude小姐献唱《请叫我的名字》昭和渣男之歌【AI MV大赛】',
+      '简体中文',
+      'zh-CN',
+    ),
+  ).toBe(true);
+  expect(await isMostlyTargetLanguage('你是Nana的小可爱吗', '简体中文', 'zh-CN')).toBe(true);
+  expect(await isMostlyTargetLanguage('Lunak_重庆电音之神· 23小时前', '简体中文', 'zh-CN')).toBe(
+    true,
+  );
+  expect(
+    await isMostlyTargetLanguage('请阅读 this long English explanation', '简体中文', 'zh-CN'),
+  ).toBe(false);
+});
+
 it('含简繁特征字的日文标题也不能直接判定为中文', async () => {
   for (const [text, target] of [
     ['本日休業', '繁體中文'],

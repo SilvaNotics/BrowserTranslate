@@ -21,6 +21,7 @@ export async function translatePageBatch(
         !s.id ||
         s.id.length > 100 ||
         typeof s.text !== 'string' ||
+        (s.language !== undefined && (typeof s.language !== 'string' || s.language.length > 100)) ||
         !s.text.trim() ||
         s.text.length > PAGE_LIMITS.maxCharacters,
     ) ||
@@ -33,7 +34,11 @@ export async function translatePageBatch(
   const detected = await Promise.all(
     segments.map(async (segment) => ({
       ...segment,
-      skipped: await isMostlyTargetLanguage(segment.text, settings.targetLanguage),
+      skipped: await isMostlyTargetLanguage(
+        segment.text,
+        settings.targetLanguage,
+        segment.language,
+      ),
     })),
   );
   signal.throwIfAborted();

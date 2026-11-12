@@ -6,6 +6,64 @@ import {
   restoreBlocks,
 } from '../src/content/page/dom';
 import { bindSelectionShortcut } from '../src/content/shortcuts';
+it('纯数字、播放量和时长不发送翻译，正文中的数字继续保留', () => {
+  document.body.innerHTML = '<span>02:18</span><div>764</div><p>Read chapter 12.</p>';
+  expect(collectBlocks(document.body).map((block) => block.text)).toEqual(['Read chapter 12.']);
+});
+it('div 中的内联链接在仅译文和双语切换后仍属于同一句正文', () => {
+  document.body.innerHTML = '<div><span>Read </span><a href="/guide">the guide</a> now.</div>';
+  const block = collectBlocks(document.body)[0]!;
+  expect(block.text).toBe('Read the guide now.');
+  showTranslation(block, '现在阅读指南。', 'translation');
+  expect(readBlockText(block.element)).toBe(block.text);
+  showTranslation(block, '现在阅读指南。', 'bilingual');
+  expect(readBlockText(block.element)).toBe(block.text);
+  restoreBlocks([block]);
+});
+it('独立导航链接逐个提取，段落中的内联链接仍随整句翻译', () => {
+  document.body.innerHTML =
+    '<nav><a href="/home">首页</a><a href="/live"><span>直播</span></a></nav>' +
+    '<div><a href="/video">A video title</a><a href="/other">Another title</a></div>' +
+    '<p>Read <a href="/guide">the guide</a> first.</p>';
+  expect(collectBlocks(document.body).map((block) => block.text)).toEqual([
+    '首页',
+    '直播',
+    'A video title',
+    'Another title',
+    'Read the guide first.',
+  ]);
+});
+it('整块都是链接时译文留在原链接中，仅译文不重复原文链接', () => {
+  document.body.innerHTML = '<h3><a href="/video">A video title</a></h3>';
+  const original = document.body.innerHTML;
+  const link = document.querySelector('a')!;
+  const block = collectBlocks(document.body)[0]!;
+  showTranslation(block, '视频标题', 'bilingual');
+  expect(link.contains(block.translation!)).toBe(true);
+  showTranslation(block, '视频标题', 'translation');
+  expect(link.contains(block.translation!)).toBe(true);
+  expect(block.translation!.querySelector('a')).toBeNull();
+  expect(block.translation!.style.marginTop).toBe('0px');
+  expect(readBlockText(block.element)).toBe('A video title');
+  restoreBlocks([block]);
+  expect(document.body.innerHTML).toBe(original);
+  expect(document.querySelector('a')).toBe(link);
+});
+it('截断的卡片标题为译文释放高度，恢复后保留页面后续样式修改', () => {
+  document.body.innerHTML =
+    '<h3 style="overflow:hidden;height:40px;max-height:40px;-webkit-line-clamp:2;white-space:nowrap">A long video title</h3>';
+  const block = collectBlocks(document.body)[0]!;
+  showTranslation(block, '一段完整的视频标题译文', 'bilingual');
+  expect(block.element.style.overflow).toBe('visible');
+  expect(block.element.style.height).toBe('auto');
+  expect(block.element.style.maxHeight).toBe('none');
+  expect(block.element.style.whiteSpace).toBe('normal');
+  block.element.style.color = 'red';
+  restoreBlocks([block]);
+  expect(block.element.style.height).toBe('40px');
+  expect(block.element.style.overflow).toBe('hidden');
+  expect(block.element.style.color).toBe('red');
+});
 it('段落外独立输入框不会让父容器生成只有待补全标记的译文', () => {
   document.body.innerHTML =
     '<article><h1>Article title</h1><p>Actual paragraph.</p><input value="private"><canvas></canvas></article>';

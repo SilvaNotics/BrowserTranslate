@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { gunzipSync } from 'node:zlib';
 import { tmpdir } from 'node:os';
+import { presentationTranslations } from './fixtures/translations';
 
 let context: BrowserContext,
   worker: Worker,
@@ -22,6 +23,11 @@ test.beforeAll(async () => {
     if (req.url === '/favicon.ico') {
       res.writeHead(204);
       res.end();
+      return;
+    }
+    if (req.url === '/presentation') {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      void readFile('e2e/fixtures/presentation.html').then((html) => res.end(html));
       return;
     }
     if (req.url === '/article') {
@@ -153,7 +159,7 @@ test.beforeAll(async () => {
             text:
               s.text.includes('nine-year') && system.includes('补全')
                 ? '得益于九年[义务]教育，中国的识字率很高。'
-                : '译文：' + s.text,
+                : (presentationTranslations[s.text] ?? '译文：' + s.text),
           })),
         );
       else if (system.includes('语境词典'))
@@ -713,7 +719,7 @@ test('双语始终排在原文下方，保留 flex、grid 和表格布局', asyn
     '#grid-text',
     '#cell-text',
   ]) {
-    const translation = page.locator(selector + ' > [data-yijing-translation]');
+    const translation = page.locator(selector + ' [data-yijing-translation]');
     await expect(translation).toBeVisible();
     const positions = await page.locator(selector).evaluate((el) => {
       const translated = el.querySelector('[data-yijing-translation]')!;
@@ -736,7 +742,7 @@ test('双语始终排在原文下方，保留 flex、grid 和表格布局', asyn
   await page.locator('#nav-text > a').evaluate((link) => {
     link.textContent = 'Dashboard (2)';
   });
-  await expect(page.locator('#nav-text > [data-yijing-translation]')).toHaveText(
+  await expect(page.locator('#nav-text [data-yijing-translation]')).toHaveText(
     '译文：Dashboard (2)',
   );
   await expect(page.locator('#flex-text > #source-label')).toHaveCSS('font-weight', '700');
@@ -748,6 +754,77 @@ test('双语始终排在原文下方，保留 flex、grid 和表格布局', asyn
   await expect(page.locator('#row-text > [data-yijing-translation]')).toBeVisible();
   await page.getByRole('button', { name: '恢复原文', exact: true }).click();
   expect(await page.locator('main').innerHTML()).toBe(original);
+});
+
+test('短中文链接保留原样，译文链接可点击，卡片不截断并适配明暗与窄屏', async () => {
+  const popup = await context.newPage();
+  await popup.goto('chrome-extension://' + id + '/popup.html');
+  await popup.getByRole('switch', { name: '整页翻译', exact: true }).check();
+  await popup.close();
+  const page = await context.newPage();
+  await page.goto(base + '/presentation');
+  const original = await page.locator('main').innerHTML();
+  const navOriginal = await page.locator('nav').innerHTML();
+  await page.screenshot({ path: 'artifacts/presentation-original.png', fullPage: true });
+  const before = requests.length;
+  await page.getByRole('button', { name: '整页翻译', exact: true }).click();
+  await expect(page.locator('[data-yijing-translation]')).toHaveCount(9);
+  await expect(page.getByRole('dialog', { name: '整页翻译控制' })).toContainText(
+    '8 段已是目标语言',
+  );
+  await expect(page.locator('#chinese-title')).toHaveText('这是一段本来就是中文的视频标题');
+  await expect(page.locator('#navigation a:not([lang]) [data-yijing-translation]')).toHaveCount(0);
+  const input = requests.slice(before).flatMap((r) => {
+    const messages = r.body.messages as { content: string }[] | undefined;
+    return messages?.[0]?.content.includes('JSON数组')
+      ? (JSON.parse(messages[1]!.content) as { text: string }[])
+      : [];
+  });
+  expect(input).toHaveLength(9);
+  expect(input.some((s) => ['首页', '直播', '热门视频'].includes(s.text))).toBe(false);
+  const titleTranslation = page.locator('#english-title a > [data-yijing-translation]');
+  await expect(titleTranslation).toHaveText(
+    presentationTranslations[
+      'A practical guide to reading across languages and discovering a wider world'
+    ]!,
+  );
+  const geometry = await page.locator('#english-title').evaluate((el) => {
+    const translation = el.querySelector('[data-yijing-translation]')!.getBoundingClientRect();
+    const title = el.getBoundingClientRect();
+    const meta = el.nextElementSibling!.getBoundingClientRect();
+    return { translationBottom: translation.bottom, titleBottom: title.bottom, metaTop: meta.top };
+  });
+  expect(geometry.translationBottom).toBeLessThanOrEqual(geometry.titleBottom + 1);
+  expect(geometry.translationBottom).toBeLessThanOrEqual(geometry.metaTop + 1);
+  await page.screenshot({ path: 'artifacts/presentation-bilingual.png', fullPage: true });
+  await page.getByRole('button', { name: '仅译文', exact: true }).click();
+  await expect(page.locator('#english-title a')).toHaveCount(1);
+  await expect(page.locator('#english-title [data-yijing-original]')).not.toHaveCount(0);
+  await expect(page.locator('#english-title [data-yijing-original]:visible')).toHaveCount(0);
+  await expect(titleTranslation).toHaveCSS('margin-top', '0px');
+  await titleTranslation.click();
+  await expect(page).toHaveURL(/#english$/);
+  await page.screenshot({ path: 'artifacts/presentation-translation.png', fullPage: true });
+  await page.emulateMedia({ colorScheme: 'dark' });
+  for (const width of [1440, 768, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await expect(titleTranslation).toBeVisible();
+    await page.screenshot({ path: `artifacts/presentation-dark-${width}.png`, fullPage: true });
+  }
+  await page.getByRole('button', { name: '关闭整页菜单', exact: true }).click({ timeout: 3000 });
+  await expect(page.getByRole('dialog', { name: '整页翻译控制' })).toHaveCount(0);
+  await expect(titleTranslation).toBeVisible();
+  await page.screenshot({ path: 'artifacts/presentation-dark-reading.png', fullPage: true });
+  await page.getByRole('button', { name: '整页翻译', exact: true }).click();
+  await page.getByRole('button', { name: '双语对照', exact: true }).click();
+  await expect(page.locator('#english-title [data-yijing-original]')).toHaveCount(0);
+  await page.getByRole('button', { name: '恢复原文', exact: true }).click();
+  expect(await page.locator('main').innerHTML()).toBe(original);
+  expect(await page.locator('nav').innerHTML()).toBe(navOriginal);
+  await page.close();
 });
 
 test('视觉识别仅上传裁剪图片，联网解释引用有效来源，搜索失败明确降级', async () => {

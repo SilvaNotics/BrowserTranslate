@@ -7,6 +7,77 @@ afterEach(() => {
   vi.unstubAllGlobals();
   document.body.innerHTML = '';
 });
+it('相同短文本按最近的语言属性隔离请求和缓存', async () => {
+  vi.useFakeTimers();
+  document.body.innerHTML = '<main lang="zh-CN"><p>台本</p><p lang="ja">台本</p></main>';
+  const sent: Segment[] = [];
+  vi.stubGlobal('chrome', {
+    runtime: {
+      sendMessage: async (message: { type: string; segments: Segment[] }) => {
+        if (message.type !== 'page:batch') return { ok: true, data: true };
+        sent.push(...message.segments);
+        return {
+          ok: true,
+          data: message.segments.map((s) => ({
+            ...s,
+            text: s.language === 'ja' ? '脚本' : s.text,
+            skipped: s.language === 'zh-CN',
+          })),
+        };
+      },
+    },
+  });
+  const controller = new PageController(() => {});
+  try {
+    controller.start();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(sent.map((s) => s.language).sort()).toEqual(['ja', 'zh-CN']);
+    expect(controller.state).toMatchObject({ done: 2, skipped: 1 });
+    expect(document.querySelector('p[lang="ja"] [data-yijing-translation]')?.textContent).toBe(
+      '脚本',
+    );
+    controller.restore();
+    controller.start();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(sent).toHaveLength(2);
+  } finally {
+    controller.restore();
+  }
+});
+it('独占段落的链接采用自身语言属性，lang 更新后重新判断', async () => {
+  vi.useFakeTimers();
+  document.body.innerHTML = '<main lang="zh-CN"><p><a href="#script" lang="ja">台本</a></p></main>';
+  const sent: Segment[] = [];
+  vi.stubGlobal('chrome', {
+    runtime: {
+      sendMessage: async (message: { type: string; segments: Segment[] }) => {
+        if (message.type !== 'page:batch') return { ok: true, data: true };
+        sent.push(...message.segments);
+        return {
+          ok: true,
+          data: message.segments.map((s) => ({
+            ...s,
+            text: '脚本',
+            skipped: s.language === 'zh-CN',
+          })),
+        };
+      },
+    },
+  });
+  const controller = new PageController(() => {});
+  try {
+    controller.start();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(sent[0]?.language).toBe('ja');
+    document.querySelector('a')!.lang = 'zh-CN';
+    await vi.advanceTimersByTimeAsync(300);
+    expect(sent.map((s) => s.language)).toEqual(['ja', 'zh-CN']);
+    expect(controller.state.skipped).toBe(1);
+    expect(document.querySelector('[data-yijing-translation]')).toBeNull();
+  } finally {
+    controller.restore();
+  }
+});
 it('导航内联链接的文字更新后重新翻译原来的段落宿主', async () => {
   vi.useFakeTimers();
   document.body.innerHTML = '<nav><span><a href="#inbox">Inbox (1)</a></span></nav>';

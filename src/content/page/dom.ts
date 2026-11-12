@@ -1,13 +1,18 @@
+interface LayoutChange {
+  element: HTMLElement;
+  originalStyle: string | null;
+  appliedStyle: string | null;
+  properties: { property: string; value: string; priority: string; applied: string }[];
+}
 export interface Block {
   id: string;
   element: HTMLElement;
   text: string;
+  language?: string;
   translation?: HTMLElement;
   original?: HTMLElement;
   originals?: HTMLElement[];
-  originalStyle?: string | null;
-  appliedStyle?: string | null;
-  layout?: { property: string; value: string; priority: string }[];
+  layout?: LayoutChange[];
   originalHidden: boolean;
   originalAria: string | null;
 }
@@ -15,7 +20,56 @@ const forbidden =
   'script,style,noscript,template,pre,textarea,input,select,button,svg,canvas,iframe,object,embed,video,audio,img,picture,[contenteditable]:not([contenteditable="false"]),[data-yijing-ui],[data-yijing-translation],[translate="no"]';
 const blockTags =
   'p,h1,h2,h3,h4,h5,h6,li,blockquote,figcaption,td,th,dt,dd,div,section,article,main,aside,header,footer,figure';
-const candidatesSelector = blockTags + ',span';
+const candidatesSelector = blockTags + ',span,a[href]';
+const proseTags = 'p,h1,h2,h3,h4,h5,h6,li,blockquote,figcaption,td,th,dt,dd';
+function isStandaloneLink(element: Element) {
+  if (!element.matches('a[href]')) return false;
+  const owner = element.parentElement?.closest(blockTags);
+  if (!owner) return true;
+  if (owner.matches(proseTags)) return false;
+  if (element.closest('nav,[role="navigation"]')) return true;
+  const hasProse = (node: Node): boolean => {
+    if (node.nodeType === Node.TEXT_NODE) return /[\p{L}\p{N}]/u.test(node.textContent ?? '');
+    if (
+      node instanceof Element &&
+      node !== owner &&
+      node.matches(blockTags + ',' + forbidden + ',a[href]')
+    )
+      return false;
+    return Array.from(node.childNodes).some(hasProse);
+  };
+  return !hasProse(owner);
+}
+export function readBlockLanguage(element: HTMLElement, text: string): string | undefined {
+  const source =
+    Array.from(element.querySelectorAll<HTMLElement>('[lang]')).find(
+      (child) => !child.closest('[data-yijing-translation]') && readBlockText(child) === text,
+    ) ?? element;
+  return source.closest('[lang]')?.getAttribute('lang')?.trim().slice(0, 100) || undefined;
+}
+function changeLayout(block: Block, element: HTMLElement, values: Record<string, string>) {
+  block.layout ??= [];
+  let change = block.layout.find((item) => item.element === element);
+  if (!change) {
+    change = {
+      element,
+      originalStyle: element.getAttribute('style'),
+      appliedStyle: null,
+      properties: [],
+    };
+    block.layout.push(change);
+  }
+  for (const [property, value] of Object.entries(values)) {
+    change.properties.push({
+      property,
+      value: element.style.getPropertyValue(property),
+      priority: element.style.getPropertyPriority(property),
+      applied: value,
+    });
+    element.style.setProperty(property, value, 'important');
+  }
+  change.appliedStyle = element.getAttribute('style');
+}
 const sensitive =
   'textarea,select,input[type]:not([type="text"]):not([type="search"]),[contenteditable]:not([contenteditable="false"])';
 const blankInput = 'input:not([type]),input[type="text"],input[type="search"]';
@@ -41,7 +95,11 @@ export function readBlockText(element: HTMLElement): string {
       return;
     }
     if (node instanceof Element && node !== element) {
-      if (!node.hasAttribute('data-yijing-original') && node.matches(blockTags)) return;
+      if (
+        !node.hasAttribute('data-yijing-original') &&
+        (node.matches(blockTags) || isStandaloneLink(node))
+      )
+        return;
       const style = getComputedStyle(node);
       if (
         (node.matches(forbidden) && !node.matches(blankInput)) ||
@@ -73,6 +131,8 @@ export function readBlockText(element: HTMLElement): string {
   return parts.join('').replace(/\s+/g, ' ').trim();
 }
 export function scanRoot(element: HTMLElement): HTMLElement {
+  const link = element.closest<HTMLElement>('a[href]');
+  if (link && isStandaloneLink(link)) return link;
   return element.closest<HTMLElement>(blockTags) ?? element;
 }
 export function collectBlocks(root: HTMLElement, known = new WeakSet<HTMLElement>()): Block[] {
@@ -91,9 +151,11 @@ export function collectBlocks(root: HTMLElement, known = new WeakSet<HTMLElement
       element.getAttribute('aria-hidden') === 'true'
     )
       continue;
-    if (element.tagName === 'SPAN' && element.parentElement?.closest(blockTags)) continue;
+    if (element.matches('a[href]') && !isStandaloneLink(element)) continue;
+    if (element.tagName === 'SPAN' && element.parentElement?.closest(blockTags + ',a[href]'))
+      continue;
     const text = readBlockText(element);
-    if (text.length < 2 || !/[\p{L}\p{N}]/u.test(text.replaceAll('[待补全]', ''))) continue;
+    if (text.length < 2 || !/\p{L}/u.test(text.replaceAll('[待补全]', ''))) continue;
     if (element.querySelector('code,kbd,samp')) {
       const prose = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
         acceptNode: (node) => {
@@ -123,6 +185,7 @@ export function collectBlocks(root: HTMLElement, known = new WeakSet<HTMLElement
       id: crypto.randomUUID(),
       element,
       text,
+      language: readBlockLanguage(element, text),
       originalHidden: element.hidden,
       originalAria: element.getAttribute('aria-hidden'),
     });
@@ -132,14 +195,37 @@ export function collectBlocks(root: HTMLElement, known = new WeakSet<HTMLElement
 export function showTranslation(block: Block, text: string, mode: 'bilingual' | 'translation') {
   if (!block.element.isConnected) return;
   if (!block.translation) {
-    const style = getComputedStyle(block.element);
+    // A title consisting entirely of one link keeps its translated title clickable.
+    const onlyLink = Array.from(block.element.querySelectorAll<HTMLAnchorElement>('a[href]')).find(
+      (link) => !link.querySelector(blockTags) && readBlockText(link) === block.text,
+    );
+    const host = onlyLink ?? block.element;
+    const style = getComputedStyle(host);
+    for (const element of new Set([block.element, host])) {
+      const computed = getComputedStyle(element);
+      if (
+        computed.whiteSpace === 'nowrap' ||
+        (computed.webkitLineClamp && computed.webkitLineClamp !== 'none') ||
+        ['hidden', 'clip'].includes(computed.overflowY) ||
+        ['hidden', 'clip'].includes(computed.overflow)
+      ) {
+        changeLayout(block, element, {
+          'white-space': 'normal',
+          overflow: 'visible',
+          'text-overflow': 'clip',
+          '-webkit-line-clamp': 'unset',
+          height: 'auto',
+          'max-height': 'none',
+        });
+      }
+    }
     block.translation = document.createElement('span');
     block.translation.dataset.yijingTranslation = block.id;
     block.translation.setAttribute('lang', '');
     Object.assign(block.translation.style, {
       all: 'unset',
       display: 'block',
-      whiteSpace: 'pre-wrap',
+      whiteSpace: 'pre-line',
       overflowWrap: 'anywhere',
       margin: '0.3em 0 0',
       lineHeight: 'inherit',
@@ -148,16 +234,10 @@ export function showTranslation(block: Block, text: string, mode: 'bilingual' | 
       minWidth: '0',
       maxWidth: '100%',
       boxSizing: 'border-box',
+      textIndent: '0',
     });
     if (style.display === 'flex' || style.display === 'inline-flex') {
-      block.originalStyle = block.element.getAttribute('style');
-      block.layout = ['flex-wrap'].map((property) => ({
-        property,
-        value: block.element.style.getPropertyValue(property),
-        priority: block.element.style.getPropertyPriority(property),
-      }));
-      block.element.style.setProperty('flex-wrap', 'wrap', 'important');
-      block.appliedStyle = block.element.getAttribute('style');
+      changeLayout(block, host, { 'flex-wrap': 'wrap' });
       // Row flex items must start a new line; column flex already stacks children.
       if (!style.flexDirection.startsWith('column')) block.translation.style.flexBasis = '100%';
       block.translation.style.order =
@@ -171,21 +251,24 @@ export function showTranslation(block: Block, text: string, mode: 'bilingual' | 
     }
     // Keep the translation beside this container's prose, before a trailing image
     // or nested paragraph. Nested blocks have their own translation jobs.
-    const source = Array.from(block.element.childNodes).findLast((node) =>
+    const source = Array.from(host.childNodes).findLast((node) =>
       node.nodeType === Node.TEXT_NODE
         ? Boolean(node.textContent?.trim())
         : node instanceof HTMLElement &&
           !node.matches(blockTags + ',' + forbidden) &&
           Boolean(node.textContent?.trim()),
     );
-    block.element.insertBefore(block.translation, source?.nextSibling ?? null);
+    host.insertBefore(block.translation, source?.nextSibling ?? null);
   }
   block.translation.textContent = text;
+  block.translation.style.marginTop = mode === 'translation' ? '0' : '0.3em';
   if (mode === 'translation') {
     if (!block.originals) {
       block.originals = [];
-      const preserve = blockTags + ',' + forbidden;
-      const isPreserved = (node: Element) => node.matches(preserve) && !node.matches(blankInput);
+      const preserve = blockTags + ',' + forbidden + ',a[href]';
+      const isPreserved = (node: Element) =>
+        (node.matches(blockTags + ',' + forbidden) || isStandaloneLink(node)) &&
+        !node.matches(blankInput);
       const hideProse = (parent: HTMLElement) => {
         let wrapper: HTMLElement | undefined;
         for (const node of Array.from(parent.childNodes)) {
@@ -255,16 +338,22 @@ export function restoreBlocks(blocks: Block[]) {
       block.originals = undefined;
       block.original = undefined;
     }
-    if (block.layout && block.element.getAttribute('style') === block.appliedStyle) {
-      if (block.originalStyle === null) block.element.removeAttribute('style');
-      else block.element.setAttribute('style', block.originalStyle!);
-    } else {
-      for (const { property, value, priority } of block.layout ?? []) {
-        if (value) block.element.style.setProperty(property, value, priority);
-        else block.element.style.removeProperty(property);
+    for (const { element, originalStyle, appliedStyle, properties } of block.layout ?? []) {
+      if (element.getAttribute('style') === appliedStyle) {
+        if (originalStyle === null) element.removeAttribute('style');
+        else element.setAttribute('style', originalStyle);
+      } else {
+        for (const { property, value, priority, applied } of properties) {
+          if (
+            element.style.getPropertyValue(property) !== applied ||
+            element.style.getPropertyPriority(property) !== 'important'
+          )
+            continue;
+          if (value) element.style.setProperty(property, value, priority);
+          else element.style.removeProperty(property);
+        }
+        if (originalStyle === null && element.style.length === 0) element.removeAttribute('style');
       }
-      if (block.layout && block.originalStyle === null && block.element.style.length === 0)
-        block.element.removeAttribute('style');
     }
     block.layout = undefined;
     block.element.hidden = block.originalHidden;

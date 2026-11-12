@@ -54,6 +54,7 @@ export interface Region {
 export interface Segment {
   id: string;
   text: string;
+  language?: string;
   skipped?: boolean;
 }
 export type Request =

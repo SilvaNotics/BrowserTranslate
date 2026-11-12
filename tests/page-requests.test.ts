@@ -4,6 +4,42 @@ import { defaultSettings } from '../src/core/settings';
 
 afterEach(() => vi.unstubAllGlobals());
 
+it('短中文链接使用各自语言上下文，日文和英文链接仍发送给模型', async () => {
+  let requested: unknown;
+  vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
+    const input = JSON.parse(JSON.parse(String(init.body)).messages[1].content);
+    requested = input;
+    return new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify(
+                input.map((s: { id: string }) => ({ id: s.id, text: '翻译结果' })),
+              ),
+            },
+          },
+        ],
+      }),
+    );
+  });
+  const result = await translatePageBatch(
+    settings(),
+    [
+      { id: 'zh', text: '直播', language: 'zh-CN' },
+      { id: 'ja', text: '台本', language: 'ja' },
+      { id: 'en', text: 'Watch now', language: 'zh-CN' },
+    ],
+    new AbortController().signal,
+  );
+  expect(requested).toEqual([
+    { id: '0', text: '台本' },
+    { id: '1', text: 'Watch now' },
+  ]);
+  expect(result.find((s) => s.id === 'zh')).toMatchObject({ text: '直播', skipped: true });
+  expect(result.filter((s) => !s.skipped)).toHaveLength(2);
+});
+
 function settings() {
   return {
     ...defaultSettings(),
@@ -93,6 +129,8 @@ it('拒绝超限、重复 ID 和损坏的分块，格式错误时不发送模型
     ],
     [null],
     [{ id: 1, text: 'paragraph' }],
+    [{ id: 'a', text: 'paragraph', language: 42 }],
+    [{ id: 'a', text: 'paragraph', language: 'z'.repeat(101) }],
   ];
   for (const segments of invalid) {
     await expect(
